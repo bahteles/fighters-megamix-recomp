@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+## 0.1.0-beta.2
+
 - The opening movie plays (it froze on its first frames), and skipping it with Start works (it crashed);
   the attract loop goes round. Toolkit at satrecomp's fix for both.
 
