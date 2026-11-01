@@ -4,10 +4,8 @@ An unofficial native port of *Fighters Megamix* (Sega AM2, Sega Saturn, 1997), m
 recompilation on [satrecomp](https://github.com/tmcleroy/satrecomp), the toolkit made for the
 Fighting Vipers port. Mac first; Linux, SteamOS and Windows follow the toolkit.
 
-> **Early work.** The game starts, its menus work and fights play to the end, all on the toolkit's own
-> machine with no emulator. The opening movie does not play yet: wait on the title screen and it
-> freezes on its first frame. Press Start on the title screen before it begins. Nothing has been
-> tested by hand yet.
+> **Early work.** The game starts, the opening movie plays, its menus work and fights play to the end,
+> all on the toolkit's own machine with no emulator. Nothing has been tested by hand yet.
 
 **No game files are included.** You need a disc image you made from your own *Fighters Megamix*
 (USA) disc. No Saturn BIOS is needed.

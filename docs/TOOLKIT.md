@@ -20,7 +20,7 @@ Generated files go to `work/<id>/` (block database, generated C++, saves) and bu
 
 | Game | Status |
 | --- | --- |
-| [Fighters Megamix](../games/fighters_megamix/PROGRESS.md) (Sega AM2, 1997) | Boots without a BIOS; menus and fights run on satrecomp's own machine with no emulator in the binary: translated SH-2 code, own renderer, own sound chip and sound CPU. The opening movie freezes on its first frame |
+| [Fighters Megamix](../games/fighters_megamix/PROGRESS.md) (Sega AM2, 1997) | Boots without a BIOS; menus, fights and the opening movie run on satrecomp's own machine with no emulator in the binary: translated SH-2 code, own renderer, own sound chip and sound CPU |
 | [Fighting Vipers](https://github.com/tmcleroy/fighting-vipers-recomp) (Sega AM2, 1996) | The first game on the toolkit, with widescreen and a training mode |
 
 ## Building

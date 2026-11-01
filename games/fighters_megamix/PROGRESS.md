@@ -4,16 +4,16 @@ Disc: *Fighters Megamix* (USA), MK-81073 V1.004 (1997-04-11). The main program i
 (571,480 bytes, loaded at 0x06004000); everything else is in three big files (`FMM_DATA.DAT` 27.7 MB,
 `MOV_DATA.DAT` 23 MB of movies, `SEL_DATA.DAT`) and 41 CD audio tracks.
 
-## Status (2026-11-01)
+## Status (2026-11-01, after the movie fix)
 
 | | |
 | --- | --- |
 | Boot, title, mode select, character select | runs, on the own machine (no BIOS image, no emulator) |
 | Arcade fights (rounds, replay, continue, game over) | runs; seen in headless screenshots only |
-| Opening movie (title screen left alone ~11 s) | **freezes on its first frame** (see "Open problems") |
-| Skipping the movie with Start | **breaks** (slave CPU) when started without a BIOS image |
-| Translated code | 15,520 blocks recorded (explorers + `movies/arcade_fight.txt`); 100% of the arcade movie's blocks run translated |
-| `make check` | passes: `FRAMES=6000 MOVIE=games/fighters_megamix/movies/arcade_fight.txt` |
+| Opening movie (title screen left alone ~11 s) | plays to its end, then the title and the attract fights; seen in headless screenshots only, not heard |
+| Skipping the movie with Start | works: back to the title, then the mode select |
+| Translated code | 16,025 blocks recorded (explorers, the idle loop, `movies/arcade_fight.txt`); the arcade movie and 14,000 frames of the idle loop (movie, attract fights, movie again) run 100% translated |
+| `make check` | passes: `FRAMES=6000 MOVIE=games/fighters_megamix/movies/arcade_fight.txt`, and with no movie for 9,000 frames (through the opening movie and the restart after it) |
 | Speed | ~195 fps headless (software renderer), one thread, M-series Mac |
 | Platforms (2026-11-01) | macOS arm64 and x86_64 (Rosetta), Linux x86_64 (container and a Steam Machine, SteamOS) and Windows x64 (Wine): the release downloads give the Mac's state hashes for 3,000 frames of `movies/arcade_fight.txt`; the GPU renderer on the Steam Machine's Vulkan draws what the Mac's Metal does |
 | Hand play, sound, window | **not tested by a person**: no one has played it, listened to it or seen it in a window |
@@ -65,25 +65,27 @@ of the file being loaded 0x060948F0, its error byte 0x060948F4; the peripheral l
 
 ## Open problems
 
-1. **The opening movie freezes on its first frame** on the own machine. The movie's clock stops after
-   35 steps because the sound driver's stream position stops moving. The own sound chip and 68000 are
-   exact against Ymir's over this movie (`SATRECOMP_SOUND=check`, `SATRECOMP_M68K=check` on the reference
-   build: 0 differences), and the reference build plays the movie with the same lifts and start-up
-   (with `SATRECOMP_SHORT_SLICES=1`). So what differs is around the sound side on the own machine: how
-   the stream's data reaches sound RAM (no SCU DMA goes there during the movie: the CPU or the SH-2's
-   DMA does it), or the SMPC / sound timing. Next: find the writer of the stream buffer in sound RAM
-   (`SATRECOMP_WRITERS`) and compare own and reference around it.
-2. **Skipping the movie with Start** leaves the slave CPU running a stale queue entry (it jumps to
-   address 0 at 0x0605F51E) when the game was started by `satrecomp/runtime/hle_bios.cpp`; with a BIOS
-   image (`--bios`) the skip works and the game restarts at the SEGA logo. So a BIOS service or a piece
-   of state the real BIOS leaves differs around the restart (the clock change, SMPC 0E/0F, re-starting
-   the slave). Same on the reference build, so it is not the own machine.
-3. The real BIOS runs 48,925 SCU DSP instructions (its own start-up); the game does not use the DSP.
+None known in what has been run. The SCU DSP is used only by the real BIOS's start-up (48,925 instructions),
+not by the game.
+
+## Fixed: the opening movie (2026-11-01)
+
+Two toolkit faults, both in satrecomp PR 9:
+
+1. **The movie froze after 71 frames.** It streams `MOV_DATA.DAT` through the CD drive and reads ahead
+   until the drive's 200-sector buffer is full. satrecomp's drive then stopped reading for good (still
+   "playing"); a real drive goes on when sectors are taken out. (The movie's clock follows the sound
+   driver's stream position, which looked like the cause at first; it was only waiting for data.)
+2. **The slave CPU crashed when the movie ended or was skipped.** The main program clears the movie player
+   away (memset at 0x0605BCD0) while the slave is still waiting in the player's loop (0x060D6274, polling
+   its timer's input capture flag); the clock change (SMPC 0E) switches the slave off a moment later. On
+   the hardware the slave's loop is in its own cache, which the master's writes do not reach. The
+   toolkit now models that for a loop a CPU keeps going round (`CachedLoop`). (The reference build worked
+   only with a BIOS image because the real BIOS turns the slave's cache on and Ymir models the cache.)
 
 ## Debugging notes
 
-- Explorer runs with `--auto SEED:900` press Start during the movie and so hit problem 2; use
-  `movies/arcade_fight.txt` (Start taps from frame 400 to the mode select, then A).
+- `movies/arcade_fight.txt`: Start taps from frame 400 to the mode select, then A (arcade mode, fights).
 - `SATRECOMP_CD_TRACE=1` lists the drive's commands on the own machine too.
 - The reference build (`make setup SATRECOMP_REFERENCE=...`, `make ref`) with
   `--bios <image> --cpu interp` and `SATRECOMP_NO_LIFTS=1` is the original game, cycle exact.
