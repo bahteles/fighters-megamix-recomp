@@ -3,7 +3,7 @@
 ## Unreleased
 
 - README: screenshots (a fight in 16:9 and in 4:3, the character select, the launcher).
-- Known: the opening movie's picture stays on its first frame while it runs (0.1.0-beta.2 said it plays).
+- README: a short section per feature, with the picture and the launcher in docs/PICTURE.md and docs/LAUNCHER.md.
 
 ## 0.1.0-beta.2
 
