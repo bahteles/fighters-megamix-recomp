@@ -4,8 +4,11 @@ An unofficial native port of *Fighters Megamix* (Sega AM2, Sega Saturn, 1997), m
 recompilation on [satrecomp](https://github.com/tmcleroy/satrecomp), the toolkit made for the
 Fighting Vipers port. Mac first; Linux, SteamOS and Windows follow the toolkit.
 
-> **Early work.** The game starts, the opening movie plays, its menus work and fights play to the end,
-> all on the toolkit's own machine with no emulator. Nothing has been tested by hand yet.
+> **Early work.** The game starts, its menus work and fights play to the end, all on the toolkit's own
+> machine with no emulator. The opening movie runs to its end and can be skipped, but its picture stays on
+> the first frame (being looked at). Nothing has been tested by hand yet.
+
+![A fight in 16:9 at the window's resolution](docs/screenshots/widescreen.jpg)
 
 **No game files are included.** You need a disc image you made from your own *Fighters Megamix*
 (USA) disc. No Saturn BIOS is needed.
@@ -24,7 +27,13 @@ by the same C++ in both.
 From the toolkit, as in Fighting Vipers: polygons drawn by your graphics card at a higher
 resolution, gamepad and keyboard for two players with every button remappable, the launcher, the
 in-game menu, save states, and the display options (scaling, picture shape, CRT shaders).
-Widescreen and a training mode are planned (see [docs/ROADMAP.md](docs/ROADMAP.md)).
+Widescreen (16:9) from the toolkit works in the fights seen so far; the other screens have not been
+checked in it. A training mode is planned (see [docs/ROADMAP.md](docs/ROADMAP.md)).
+
+| | |
+| --- | --- |
+| ![A fight at the window's resolution, 4:3](docs/screenshots/fight.jpg) | ![The character select](docs/screenshots/select.jpg) |
+| ![The launcher: your disc image, the display's switches, Play](docs/screenshots/launcher-game.png) | |
 
 ## Building
 
