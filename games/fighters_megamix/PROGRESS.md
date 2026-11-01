@@ -10,7 +10,7 @@ Disc: *Fighters Megamix* (USA), MK-81073 V1.004 (1997-04-11). The main program i
 | --- | --- |
 | Boot, title, mode select, character select | runs, on the own machine (no BIOS image, no emulator) |
 | Arcade fights (rounds, replay, continue, game over) | runs; seen in headless screenshots only |
-| Opening movie (title screen left alone ~11 s) | plays to its end, then the title and the attract fights; seen in headless screenshots only, not heard |
+| Opening movie (title screen left alone ~11 s) | runs to its end, then the title and the attract fights; **its picture stays on the first frame** (headless, software and GPU renderers alike, 2026-11-01); not heard |
 | Skipping the movie with Start | works: back to the title, then the mode select |
 | Translated code | 16,025 blocks recorded (explorers, the idle loop, `movies/arcade_fight.txt`); the arcade movie and 14,000 frames of the idle loop (movie, attract fights, movie again) run 100% translated |
 | `make check` | passes: `FRAMES=6000 MOVIE=games/fighters_megamix/movies/arcade_fight.txt`, and with no movie for 9,000 frames (through the opening movie and the restart after it) |
@@ -65,7 +65,9 @@ of the file being loaded 0x060948F0, its error byte 0x060948F4; the peripheral l
 
 ## Open problems
 
-None known in what has been run. The SCU DSP is used only by the real BIOS's start-up (48,925 instructions),
+- The opening movie's picture stays on its first frame (after the TrueMotion and Duck logos) while the movie runs its length.
+
+Nothing else known in what has been run. The SCU DSP is used only by the real BIOS's start-up (48,925 instructions),
 not by the game.
 
 ## Fixed: the opening movie (2026-11-01)

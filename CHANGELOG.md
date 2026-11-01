@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- README: screenshots (a fight in 16:9 and in 4:3, the character select, the launcher).
+- Known: the opening movie's picture stays on its first frame while it runs (0.1.0-beta.2 said it plays).
+
 ## 0.1.0-beta.2
 
 - The opening movie plays (it froze on its first frames), and skipping it with Start works (it crashed);
