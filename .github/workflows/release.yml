@@ -1,0 +1,40 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# Copyright (C) 2026 Tommy McLeroy. Part of Fighters Megamix Recomp: https://github.com/tmcleroy/fighters-megamix-recomp
+# A pushed tag vX.Y.Z opens a draft release: it checks the tag against VERSION and CHANGELOG.md,
+# audits the files, and writes the release's notes from the changelog. The downloads are not built
+# here: they contain code translated from the game, so they are made by a maintainer with the disc
+# (tools/release/all.sh) and uploaded to the draft, which a person then publishes.
+# See docs/RELEASING.md.
+name: Release
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  draft:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: The tag is the version in VERSION
+        run: |
+          [ "v$(cat VERSION)" = "$GITHUB_REF_NAME" ] || { echo "VERSION says $(cat VERSION), the tag is $GITHUB_REF_NAME"; exit 1; }
+      - run: tools/audit.sh
+      - name: Notes from the changelog
+        run: |
+          tools/release/notes.sh "$(cat VERSION)" > notes.md
+          cat >> notes.md <<'NOTES'
+
+          **You need your own copy of the game** (a disc image made from your own disc). No game files are included.
+          Check your download against `SHA256SUMS.txt`.
+          NOTES
+      - name: Draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          case "$GITHUB_REF_NAME" in *-*) pre=--prerelease ;; *) pre= ;; esac
+          gh release create "$GITHUB_REF_NAME" --draft $pre --verify-tag \
+            --title "Fighters Megamix Recomp ${GITHUB_REF_NAME#v}" --notes-file notes.md

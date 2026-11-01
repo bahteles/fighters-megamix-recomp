@@ -1,0 +1,14 @@
+# never commit game data or anything derived from it
+disc/
+bios/
+*.bin
+*.cue
+*.iso
+*.chd
+build/
+work/
+*.state
+.DS_Store
+__pycache__/
+# the reference emulator, fetched by 'make setup' for development only
+satrecomp/third_party/
