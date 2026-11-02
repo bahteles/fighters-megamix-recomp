@@ -5,7 +5,7 @@
 - Unlock everything (a cheat on the Features page): every character, Mr. Meat and Palm Tree among them, every
   course and the extra options, without playing for them. The game is shown its save with them unlocked; the
   save kept is your own, so with it off the game has what you have unlocked. From the next start or reset.
-  Toolkit at satrecomp 3100b56 (save unlocks).
+  Toolkit at satrecomp a7b9c65 (save unlocks).
 - Sound effects in fights: they stopped after "Round 1, Fight!", a hiss in their place, while the music went
   on. The file library's Fread is the game's own again, reading through the CD drive (the toolkit's
   replacement read at once, and the game loads its sound through it); loading before a fight takes about two
