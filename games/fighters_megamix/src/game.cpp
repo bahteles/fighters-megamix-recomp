@@ -20,7 +20,6 @@ void RegisterShared() {
     Register(kGfsStart, 0x06048664);
     Register(kGfsPoll, 0x060489D8);
     Register(kGfsClose, 0x0604894C);
-    Register(kGfsFread, 0x06049270);
     Register(kCdPlay, 0x06047F50);
     Register(kCdSeek, 0x06048014);
     Register(kCdGetCurStat, 0x060479C8);
@@ -34,6 +33,13 @@ void RegisterShared() {
 
 void RegisterGame() {
     RegisterShared();
+    // Widescreen: the stages' panels (the cages, fences and walls) are listed by four of the engine's routines,
+    // each with its own copy of a limit on how far off the picture's middle a panel may be (the toolkit's
+    // shared::WidenAm2PanelLimits): two shaped as in Fighting Vipers (the limit loaded at 0x06020BC4 and
+    // 0x06020CD0) and two more (0x06021F76, 0x060220E6). (The gauges stay in the middle: Fighting Vipers' way of
+    // moving them out, a split of NBG2's rows, would split the title screen's text here too, which is on that
+    // screen in the same rows; it needs the game's "a fight is on", not found yet.)
+    TheGame().frame = [] { shared::WidenAm2PanelLimits({0x06020BC4, 0x06020CD0, 0x06021F76, 0x060220E6}); };
     TheGame().state = [](Archive &ar) { shared::State(ar); };
 }
 

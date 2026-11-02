@@ -29,7 +29,7 @@ each Fighting Vipers lift hashes; the constant pools differ), and replaced by th
 | AM2 LoadFile | 0602DE3C | 06029B44 |
 | AM2 ReadPads | 0602F168 | 0602BA24 |
 | GFS Open / Start / Poll / Close | 060483BC / 06048664 / 060489D8 / 0604894C | 06044D78 / 06045020 / 06045394 / 06045308 |
-| GFS Fread | 06049270 | 06045C2C |
+| (GFS Fread: the game's own, see Sound below) | 06049270 | 06045C2C |
 | CdPlay / CdSeek / GetCurStat | 06047F50 / 06048014 / 060479C8 | 0604490C / 060449D0 / 06044384 |
 | PER SendCommand | 0605C458; the movie player's copy 060D4510 | 06058934 |
 
@@ -45,6 +45,22 @@ of the file being loaded 0x060948F0, its error byte 0x060948F4; the peripheral l
 0x060FFF80 (the same as Fighting Vipers').
 
 ## Game facts
+
+- **Sound in a fight**: before each fight the game reads its sound program and samples into sound RAM
+  (0x25A00000 16 KB, 0x25A04000 140 sectors, then each fighter's and the stage's at 0x25A4A000, 0x25A59800,
+  0x25A69000) through the file library's Fread, and waits there with its interrupts running while the
+  drive reads. The shared Fread replacement read at once (nothing ran meanwhile), and the fight's sound
+  effects stopped after "Round 1, Fight!", a hiss in their place (seen in the effects alone, with the CD
+  music input switched off); the CD music went on. Fread is now the game's own, reading through the CD drive
+  (2026-11-01): loading before a fight takes about two seconds longer.
+- **Widescreen**: four of the engine's routines list the stages' panels (cages, fences, walls), each taking a
+  panel only if its four corners are within a limit of the picture's middle (224 dots, 48 past the 4:3
+  sides); the limit is loaded at 0x06020BC4 and 0x06020CD0 (shaped as Fighting Vipers' two) and at
+  0x06021F76 and 0x060220E6. In Tokio's stage the fence is listed by the one at 0x06020CD0 (a limit of 60
+  there takes the whole fence away); at 16:9 a panel at the right edge needed a limit of nearly 300. The
+  fight's display is on NBG2 as in Fighting Vipers, but the title screen's text is on NBG2 in the same rows,
+  so Fighting Vipers' split of those rows would cut the title's copyright line apart: the gauges wait for a
+  "fight is on" flag (not found: the game's mode and fight state are not at Fighting Vipers' addresses).
 
 - **Master/slave command queue** (the same scheme as Fighting Vipers): the master writes commands at
   [GBR+72] (GBR 0x060FFC00) and signals the slave by writing 0x21000000; the slave's loop is at 0x0605F464
