@@ -9,8 +9,15 @@ The **first page** has your disc image (drop its `.cue` file on the window, or c
 port is made from (USA, `MK-81073`, V1.004) and remembers where it is; it never copies, moves or changes it. On
 SteamOS, **Add to Steam** puts the game in Game Mode.
 
-The **Features** page has run-ahead and the [picture's options](PICTURE.md); a feature changed in the in-game menu is
-kept there too.
+The **Features** page has run-ahead, the [picture's options](PICTURE.md) and a cheat; a feature changed in the in-game
+menu is kept there too.
+
+### Unlock everything
+
+A cheat on the Features page (or the menu's Cheats page): every character (Mr. Meat and Palm Tree too), every course
+and the extra options, without playing for them. The game is shown its save with everything unlocked, and the save
+kept is your own, so with it off the game has what you have unlocked. It takes effect when the game next starts or is
+reset.
 
 ### Run-ahead
 

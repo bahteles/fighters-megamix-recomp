@@ -29,10 +29,37 @@ void RegisterShared() {
     Register(kPerSendCommand, 0x060D4510, "SendCommand (movie player)");
 }
 
+// Unlock everything (a cheat): what the game unlocks is in its save file FIGHTERS_MM (1,396 bytes, read to
+// 0x0609FA00 and kept there), and the toolkit shows the game that file with these fields raised, keeping the
+// player's own (Game::saveUnlocks). Found from the code that reads them:
+// - 0x0609FAA8, a longword, one bit for each character or course unlocked: the screens that choose them take all
+//   ones for all (character select, 0x0603DE30, offers 28 characters instead of 20, and 0x0603CB4C 42 places
+//   instead of 35); a new file has 0x07FF85FF.
+// - 0x0609FB02, a word of extras the game adds as it is played (the routine at 0x06037B58): 0x0080, 0x0600,
+//   0x0100, 0x0040 and 0x0030, each when every course is cleared (0x0609FB04 = 0x01FF) and a count is reached.
+// - 0x0609FB85 to 0x0609FB88, a byte each for the characters the game gives for time played and times started
+//   (Mr. Meat and Palm Tree: 0x0609FB86 when it has been started 29 times, 0x0609FB87 when 0x0609FA80 passes
+//   5,039) and the extra the same routine gives last.
+void RegisterUnlocks() {
+    Game &game = TheGame();
+    game.features.push_back({"unlock_all", "Cheats", "Unlock everything",
+                             "Every character, course and extra option, without playing for them. Your own save is kept as it is: "
+                             "turned off, the game has what you have unlocked. From the next start or reset."});
+    game.saveUnlocks = {"unlock_all", "FIGHTERS_MM", {
+        {0xA8, 4, SaveField::kBits, 0xFFFFFFFF},
+        {0x102, 2, SaveField::kBits, 0x07F0},
+        {0x185, 1, SaveField::kBits, 1},
+        {0x186, 1, SaveField::kBits, 1},
+        {0x187, 1, SaveField::kBits, 1},
+        {0x188, 1, SaveField::kBits, 1},
+    }};
+}
+
 } // namespace
 
 void RegisterGame() {
     RegisterShared();
+    RegisterUnlocks();
     // Widescreen: the stages' panels (the cages, fences and walls) are listed by four of the engine's routines,
     // each with its own copy of a limit on how far off the picture's middle a panel may be (the toolkit's
     // shared::WidenAm2PanelLimits): two shaped as in Fighting Vipers (the limit loaded at 0x06020BC4 and
