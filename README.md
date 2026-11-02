@@ -36,6 +36,8 @@ share (file loading, CD music, the controllers) are replaced by the same C++ in 
 - **Save states**: nine slots, from the menu or F5 / F9 ([keys](docs/LAUNCHER.md#keys-while-playing)).
 - **Run-ahead**: what you press seen a frame or two sooner, the game running exactly as without it
   ([more](docs/LAUNCHER.md#run-ahead)).
+- **Unlock everything**: every character, course and extra option without playing for them, your own save kept as
+  it is ([more](docs/LAUNCHER.md#unlock-everything)).
 - **Controls**: a gamepad or the keyboard for two players, every button changeable, and buttons pressed together on
   one key ([more](docs/LAUNCHER.md#controllers)).
 - **Updates** in the launcher, and a **portable mode** that keeps everything beside the program

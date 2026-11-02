@@ -78,6 +78,15 @@ of the file being loaded 0x060948F0, its error byte 0x060948F4; the peripheral l
   The movie's clock (0x060E5AFC, 44,100 Hz) advances only when the sound driver's stream position (a
   word in sound RAM, from [0x25A00404] + 0xA0) moves, at 0x060C1180..0x060C1232.
 - After the movie, or when it is skipped, the main program is started again (the SEGA logo).
+- The save file `FIGHTERS_MM` (1,396 bytes, no checksum) is read to 0x0609FA00 at the start and kept there
+  (the opening movie uses the area as a buffer). 0x0609FAA8: a longword, a bit per character or course
+  unlocked (new file 0x07FF85FF; the select screens take all ones for all: 0x0603DE30, 28 characters
+  instead of 20; 0x0603CB4C, 42 places instead of 35). The routine at 0x06037B58 adds what play earns:
+  0x0609FB86 (started more than 28 times, 0x0609FA8C), 0x0609FB87 (0x0609FA80 past 5,039), 0x0609FB88,
+  and bits of the word 0x0609FB02 (0x80, 0x600, 0x100, 0x40, 0x30) once every course is cleared
+  (0x0609FB04 = 0x01FF) and counts are reached. 0x0609FB85 is read for character 16 (0x0603FEF0).
+  The cheat "unlock_all" raises these (satrecomp `Game::saveUnlocks`); checked: character select shows all
+  32, and the save file written is the same byte for byte as without it (arcade_fight, 2,600 frames).
 
 ## Open problems
 
