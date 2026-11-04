@@ -153,6 +153,9 @@ private:
     std::vector<HdText> m_hdText;
     uint32_t m_hdAirportOffset = 0;
     uint32_t m_hdAirportCrc[3]{};
+    struct HdBackground { uint32_t offset, map, cells, cellBytes, palette, crc[3]; };
+    std::vector<HdBackground> m_hdBackgrounds;
+    SDL_GPUTexture *m_backgroundLines = nullptr;
     bool MatchesHdText(const Frame &frame, const HdText &text) const;
     bool m_hdEnabled = false, m_hdAttempted = false;
     bool LoadHdTexturePack();

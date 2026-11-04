@@ -58,6 +58,7 @@ struct Frame {
     const uint32_t *layers[5] = {}; // RBG0, NBG0..NBG3
     const uint8_t *spriteWindow = nullptr; // 1 where the sprite layer is cut out
     const uint32_t *back = nullptr;        // per row: the back screen's colour; A = 0 where the display is off
+    const float *backgroundLines = nullptr; // two scrolling layers, two vec4s per screen row
     const uint32_t *colors = nullptr;      // colour RAM as 2048 colours
 
     // The rotation screen (the floor, in most 3D games), for a backend to draw at its own resolution. Per line

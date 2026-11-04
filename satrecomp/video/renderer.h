@@ -222,6 +222,7 @@ private:
     void GpuLine(uint32 y);
     void GpuRow(uint32 row, uint32 y, bool otherField);
     bool m_gpuFloor = true;            // the backend draws the rotation screen itself where it can
+    std::vector<float> m_backgroundLines;
     std::vector<float> m_floorLines;   // 8 floats a line (FloorLine), by line of a field
     std::vector<uint8> m_vram2Image;   // VDP2 video memory as it was at the end of the frame
     bool m_bothFields = true; // of an interlaced picture, draw the other field's lines too every frame

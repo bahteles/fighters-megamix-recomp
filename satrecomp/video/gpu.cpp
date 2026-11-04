@@ -29,14 +29,15 @@ namespace {
         int32_t sprite[4];
         int32_t priLow[4], priHigh[4];
         int32_t misc[4];
-        int32_t hdText[8][4];
-        int32_t hdTextMeta[2][4];
+        int32_t hdText[32][4];
+        int32_t hdTextMeta[8][4];
         float colorOffset[7][4];
         int32_t floor[4];       // lines of a field, dots a line, flags, priority
         int32_t floorMore[4];   // colour offset, more character number bits, more palette bits, access
         uint32_t floorPlanes[16];
         uint32_t hdAirport[4];
         int32_t menuBackground[4];
+        uint32_t hdBackground[4];
     };
 
     constexpr uint32_t kVramWidth = 1024, kVramHeight = 512;
@@ -46,10 +47,10 @@ namespace {
     constexpr uint32_t kWinnerLeftOfCenter = 93;
     // This pack format uses ordinary ZIP members without streaming data descriptors.
     // Read only the known members, directly from the archive.
-    bool ReadTextureZip(const std::filesystem::path &path, std::string (&members)[4]) {
+    bool ReadTextureZip(const std::filesystem::path &path, std::string (&members)[5]) {
         std::ifstream file(path, std::ios::binary);
         constexpr size_t maxBytes = 256u * 1024 * 1024;
-        constexpr const char *names[] = {"fighters.fmmtex", "winner.fmmhud", "fight-text.fmmhud", "airport-floor.fmmtex"};
+        constexpr const char *names[] = {"fighters.fmmtex", "winner.fmmhud", "fight-text.fmmhud", "airport-floor.fmmtex", "backgrounds.fmmtex"};
         size_t total = 0;
         while (file) {
             uint8_t header[30];
@@ -66,8 +67,8 @@ namespace {
             std::string name(word(26), '\0');
             if (!file.read(name.data(), name.size()) || !file.seekg(word(28), std::ios::cur)) { return false; }
             int index = 0;
-            while (index < 4 && name != names[index]) { ++index; }
-            if (index == 4) {
+            while (index < 5 && name != names[index]) { ++index; }
+            if (index == 5) {
                 file.seekg(compressed, std::ios::cur);
                 continue;
             }
@@ -154,7 +155,7 @@ bool Gpu::Init(SDL_GPUDevice *device) {
     SDL_GPUShader *quadVertex = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_VERTEX, quad_vert, 0, 1);
     SDL_GPUShader *quadFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, quad_frag, 2, 1);
     SDL_GPUShader *screenVertex = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_VERTEX, screen_vert, 0, 0);
-    SDL_GPUShader *composeFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, compose_frag, 12, 1);
+    SDL_GPUShader *composeFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, compose_frag, 13, 1);
     SDL_GPUShader *hudFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, hud_frag, 1, 0);
     if (!quadVertex || !quadFragment || !screenVertex || !composeFragment) {
         return false;
@@ -249,7 +250,8 @@ bool Gpu::Init(SDL_GPUDevice *device) {
     m_back = Texture(SDL_GPU_TEXTUREFORMAT_R8G8B8A8_UNORM, 1, 512, false);
     m_vram2 = Texture(SDL_GPU_TEXTUREFORMAT_R8_UINT, kVramWidth, kVramHeight, false);
     m_floorLines = Texture(SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT, 2, 512, false);
-    return m_nearest && m_vram && m_colors && m_back && m_vram2 && m_floorLines;
+    m_backgroundLines = Texture(SDL_GPU_TEXTUREFORMAT_R32G32B32A32_FLOAT, 2, 512, false);
+    return m_backgroundLines && m_nearest && m_vram && m_colors && m_back && m_vram2 && m_floorLines;
 }
 
 void Gpu::Shutdown() {
@@ -273,6 +275,7 @@ void Gpu::Shutdown() {
     Release(m_window);
     Release(m_vram2);
     Release(m_floorLines);
+    Release(m_backgroundLines);
     Release(m_output);
     Release(m_hud);
     Release(m_plain);
@@ -419,7 +422,7 @@ bool Gpu::LoadHdTexturePack() {
         return false;
     }
     const std::filesystem::path path(std::u8string(reinterpret_cast<const char8_t *>(m_hdPackPath.c_str())));
-    std::string members[4];
+    std::string members[5];
     if (!ReadTextureZip(path, members)) {
         return false;
     }
@@ -495,6 +498,26 @@ bool Gpu::LoadHdTexturePack() {
         }
         m_hdAirportOffset = static_cast<uint32_t>(pixels.size());
         pixels.insert(pixels.end(), airport.begin() + 20, airport.end());
+    }
+    const auto &backgrounds = members[4];
+    constexpr size_t backgroundBytes = 1024u * 1024 * 4;
+    if (backgrounds.size() >= 8 && backgrounds.compare(0, 8, "FMMBKG01") == 0) {
+        size_t pos = 8;
+        while (backgrounds.size() - pos >= 28 + backgroundBytes) {
+            uint32_t header[7]{};
+            for (uint32_t i = 0; i < 28; ++i) {
+                header[i / 4] |= static_cast<uint32_t>(static_cast<uint8_t>(backgrounds[pos + i])) << (8 * (i % 4));
+            }
+            if (header[0] > 0x7E000 || header[1] > 0x7FFFF || header[2] > 0x80000 - header[1] ||
+                header[3] > 1792 || pixels.size() + backgroundBytes > kHdAtlasWidth * kHdMaxRows) {
+                return false;
+            }
+            m_hdBackgrounds.push_back({static_cast<uint32_t>(pixels.size()), header[0], header[1],
+                                       header[2], header[3], {header[4], header[5], header[6]}});
+            pixels.insert(pixels.end(), backgrounds.begin() + pos + 28, backgrounds.begin() + pos + 28 + backgroundBytes);
+            pos += 28 + backgroundBytes;
+        }
+        if (pos != backgrounds.size()) { return false; }
     }
     pixels.resize((pixels.size() + kHdAtlasWidth - 1) / kHdAtlasWidth * kHdAtlasWidth);
     if (pixels.empty()) {
@@ -614,6 +637,7 @@ void Gpu::Draw(const Frame &frame) {
     const uint32_t colorsAt = reserve(2048 * 4);
     const uint32_t vram2At = reserve(vramBytes);
     const uint32_t floorAt = reserve(512 * 8 * sizeof(float));
+    const uint32_t backgroundAt = reserve(512 * 8 * sizeof(float));
     if (offset > m_transferCapacity) {
         if (m_transfer) {
             SDL_ReleaseGPUTransferBuffer(m_device, m_transfer);
@@ -711,6 +735,7 @@ void Gpu::Draw(const Frame &frame) {
     memcpy(bytes + colorsAt, frame.colors, 2048 * 4);
     memcpy(bytes + vram2At, frame.floor.vram, vramBytes);
     memcpy(bytes + floorAt, frame.floor.lines, 512 * 8 * sizeof(float));
+    memcpy(bytes + backgroundAt, frame.backgroundLines, 512 * 8 * sizeof(float));
     SDL_UnmapGPUTransferBuffer(m_device, m_transfer);
 
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(m_device);
@@ -742,6 +767,7 @@ void Gpu::Draw(const Frame &frame) {
         uploadTexture(pass, m_colors, colorsAt, 2048, 1);
         uploadTexture(pass, m_vram2, vram2At, kVramWidth, kVramHeight);
         uploadTexture(pass, m_floorLines, floorAt, 2, 512);
+        uploadTexture(pass, m_backgroundLines, backgroundAt, 2, 512);
         SDL_EndGPUCopyPass(pass);
     }
 
@@ -825,6 +851,16 @@ void Gpu::Draw(const Frame &frame) {
         }
         // (several samples a pixel when the VDP1's target has more pixels than the output shows)
         const uint32_t samples = std::clamp<uint32_t>((m_spriteHeight * m_scale + m_outputHeight / 2) / m_outputHeight, 1, 4);
+        if (m_hdEnabled) {
+            for (const auto &replacement : m_hdBackgrounds) {
+                if (crc32(0, floor.vram + replacement.map, 8192) == replacement.crc[0] &&
+                    crc32(0, floor.vram + replacement.cells, replacement.cellBytes) == replacement.crc[1] &&
+                    crc32(0, reinterpret_cast<const Bytef *>(frame.colors + replacement.palette), 256 * 4) == replacement.crc[2]) {
+                    const int layer = replacement.palette == 0 ? 0 : 1;
+                    uniforms.hdBackground[layer] = replacement.offset;
+                }
+            }
+        }
         uniforms.misc[1] = static_cast<int32_t>(samples);
         if (m_uiContours) {
             // The normal backgrounds carry the interface. In 3D scenes, NBG0
@@ -876,7 +912,7 @@ void Gpu::Draw(const Frame &frame) {
                 uniforms.hdText[i][1] = static_cast<int32_t>(text.top);
                 uniforms.hdText[i][2] = static_cast<int32_t>(text.width);
                 uniforms.hdText[i][3] = static_cast<int32_t>(text.height);
-                if (uniforms.misc[3] == 8) { break; }
+                if (uniforms.misc[3] == 32) { break; }
             }
         }
 
@@ -886,13 +922,14 @@ void Gpu::Draw(const Frame &frame) {
         target.store_op = SDL_GPU_STOREOP_STORE;
         SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &target, 1, nullptr);
         SDL_BindGPUGraphicsPipeline(pass, m_composePipeline);
-        const SDL_GPUTextureSamplerBinding samplers[12] = {
+        const SDL_GPUTextureSamplerBinding samplers[13] = {
             {m_sprites[0], m_nearest}, {m_colors, m_nearest},    {m_layers[0], m_nearest},  {m_layers[1], m_nearest},
             {m_layers[2], m_nearest},  {m_layers[3], m_nearest}, {m_layers[4], m_nearest},  {m_window, m_nearest},
             {m_back, m_nearest},       {m_vram2, m_nearest},     {m_floorLines, m_nearest},
             {m_hdEnabled ? m_hdAtlas : m_vram, m_nearest},
+            {m_backgroundLines, m_nearest},
         };
-        SDL_BindGPUFragmentSamplers(pass, 0, samplers, 12);
+        SDL_BindGPUFragmentSamplers(pass, 0, samplers, 13);
         SDL_PushGPUFragmentUniformData(cmd, 0, &uniforms, sizeof(uniforms));
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
         SDL_EndGPURenderPass(pass);

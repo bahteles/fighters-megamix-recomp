@@ -647,6 +647,19 @@ void Renderer::GpuRow(uint32 row, uint32 y, bool otherField) {
     SpriteWindowLine(row);
     std::copy_n(m_spriteWindow.begin(), width, m_spriteWindowImage.begin() + static_cast<size_t>(row) * width);
     WindowLines(row);
+    m_backgroundLines.resize(512 * 8);
+    for (uint32 index = 0; index < 2; ++index) {
+        const auto &bg = regs2.bgParams[index + 1];
+        const auto &scroll = m_scroll[index];
+        float *coordinates = &m_backgroundLines[row * 8 + index * 4];
+        const uint32 fracX = scroll.fracX + bg.scrollAmountH - WideDots() * scroll.incH;
+        coordinates[0] = static_cast<float>(fracX & 0x3FFFF) / 256.0f;
+        coordinates[1] = static_cast<float>((scroll.fracY + bg.scrollAmountV) & 0x3FFFF) / 256.0f;
+        coordinates[2] = static_cast<float>(scroll.incH) / 256.0f;
+        coordinates[3] = !bg.bitmap && !bg.mosaicEnable && !bg.vcellScrollEnable &&
+                         bg.cellSizeShift == 0 && !bg.twoWordChar && bg.extChar &&
+                         bg.pageShiftH == 0 && bg.pageShiftV == 0 ? 1.0f : 0.0f;
+    }
     const bool rbg1 = regs2.bgEnabled[5];
     for (uint32 layer = 1; layer <= 5; layer++) {
         uint32 *line = out[layer - 1];
@@ -768,6 +781,8 @@ void Renderer::GpuEndFrame() {
         m_colorImage.resize(2048);
         Colors(m_colorImage.data());
         frame.colors = m_colorImage.data();
+        m_backgroundLines.resize(512 * 8);
+        frame.backgroundLines = m_backgroundLines.data();
         frame.spriteType = params.type;
         frame.spriteMixed = params.mixedFormat;
         frame.spriteWindowUsed = params.useSpriteWindow;
