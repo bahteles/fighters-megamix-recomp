@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <array>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -38,6 +39,7 @@ namespace {
         uint32_t hdAirport[4];
         int32_t menuBackground[4];
         uint32_t hdBackground[4];
+        uint32_t stageFloor[64], stageBackground[32], stageShape[8];
     };
 
     constexpr uint32_t kVramWidth = 1024, kVramHeight = 512;
@@ -153,9 +155,9 @@ void Gpu::Release(SDL_GPUTexture *&texture) {
 bool Gpu::Init(SDL_GPUDevice *device) {
     m_device = device;
     SDL_GPUShader *quadVertex = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_VERTEX, quad_vert, 0, 1);
-    SDL_GPUShader *quadFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, quad_frag, 2, 1);
+    SDL_GPUShader *quadFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, quad_frag, 3, 1);
     SDL_GPUShader *screenVertex = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_VERTEX, screen_vert, 0, 0);
-    SDL_GPUShader *composeFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, compose_frag, 13, 1);
+    SDL_GPUShader *composeFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, compose_frag, 14, 1);
     SDL_GPUShader *hudFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, hud_frag, 1, 0);
     if (!quadVertex || !quadFragment || !screenVertex || !composeFragment) {
         return false;
@@ -276,6 +278,7 @@ void Gpu::Shutdown() {
     Release(m_vram2);
     Release(m_floorLines);
     Release(m_backgroundLines);
+    Release(m_stageAtlas);
     Release(m_output);
     Release(m_hud);
     Release(m_plain);
@@ -566,7 +569,251 @@ bool Gpu::LoadHdTexturePack() {
         return sizeKey(a) < sizeKey(b);
     });
     m_hdTextures = std::move(textures);
+    IndexStagePages();
     return true;
+}
+
+void Gpu::IndexStagePages() {
+    m_stagePages.clear();
+    const std::filesystem::path path(std::u8string(reinterpret_cast<const char8_t *>(m_hdPackPath.c_str())));
+    std::ifstream input(path, std::ios::binary);
+    while (input) {
+        uint8_t header[30];
+        if (!input.read(reinterpret_cast<char *>(header), sizeof(header)) || std::memcmp(header, "PK\x03\x04", 4)) { break; }
+        auto word = [&](int i) { return uint32_t(header[i]) | uint32_t(header[i + 1]) << 8; };
+        auto number = [&](int i) { return word(i) | word(i + 2) << 16; };
+        const uint32_t compressed = number(18), bytes = number(22);
+        if ((word(6) & ~0x800u) || !word(26) || word(26) > 256) { break; }
+        std::string name(word(26), '\0');
+        if (!input.read(name.data(), name.size()) || !input.seekg(word(28), std::ios::cur)) { break; }
+        StagePage page{};
+        char trailing = 0;
+        if (word(8) == 8 && bytes == 1024u * 1024 * 4 &&
+            std::sscanf(name.c_str(), "stages/%x-%x-%x-%x-%x-%x.rgba%c",
+                        &page.bank, &page.bytes, &page.cellsCrc, &page.mapCrc, &page.paletteCount, &page.paletteCrc, &trailing) == 6 &&
+            page.paletteCount > 0 && page.paletteCount <= 256 && page.bank < 0x80000 && page.bytes && page.bytes <= 0x80000 - page.bank &&
+            compressed && compressed <= 16u * 1024 * 1024) {
+            page.decodedBytes = bytes;
+        } else if (word(8) == 8 && bytes && bytes <= 64u * 1024 * 1024 &&
+                   std::sscanf(name.c_str(), "stage-sprites/%x-%x-%x-%x-%x-%x.rgb555%c",
+                               &page.bank, &page.bytes, &page.cellsCrc, &page.width, &page.phase,
+                               &page.paletteCrc, &trailing) == 6 &&
+                   page.width > 0 && page.width <= 504 && page.phase < page.width &&
+                   page.bank < 0x80000 && page.bytes && page.bytes <= 0x80000 - page.bank &&
+                   compressed && compressed <= 64u * 1024 * 1024) {
+            const uint32_t prefix = (page.width - page.phase) % page.width;
+            const uint32_t rows = (page.bytes * 2 + prefix + page.width - 1) / page.width;
+            if (bytes == rows * page.width * 32) {
+                page.paletteCount = 16;
+                page.decodedBytes = bytes;
+            }
+        }
+        if (page.decodedBytes) {
+            page.fileOffset = static_cast<uint64_t>(input.tellg());
+            page.compressed = compressed;
+            page.crc = number(14);
+            m_stagePages.push_back(page);
+        }
+        if (!input.seekg(compressed, std::ios::cur)) { break; }
+    }
+}
+
+bool Gpu::LoadStagePages(const std::vector<int> &pages) {
+    if (pages == m_activeStagePages) { return true; }
+    if (pages.size() > 256) { return false; }
+    if (pages.empty()) {
+        m_activeStagePages.clear();
+        return true;
+    }
+    const std::filesystem::path path(std::u8string(reinterpret_cast<const char8_t *>(m_hdPackPath.c_str())));
+    std::ifstream input(path, std::ios::binary);
+    std::vector<uint32_t> offsets;
+    size_t total = 0;
+    for (int index : pages) {
+        offsets.push_back(static_cast<uint32_t>(total));
+        total += (m_stagePages[index].decodedBytes + kHdAtlasWidth - 1) / kHdAtlasWidth * kHdAtlasWidth;
+        if (total > kHdAtlasWidth * kHdMaxRows) { return false; }
+    }
+    std::vector<uint8_t> pixels(total);
+    for (size_t i = 0; i < pages.size(); ++i) {
+        const auto &page = m_stagePages[pages[i]];
+        std::vector<uint8_t> compressed(page.compressed);
+        input.seekg(static_cast<std::streamoff>(page.fileOffset));
+        if (!input.read(reinterpret_cast<char *>(compressed.data()), compressed.size())) { return false; }
+        z_stream stream{};
+        stream.next_in = compressed.data();
+        stream.avail_in = page.compressed;
+        stream.next_out = pixels.data() + offsets[i];
+        stream.avail_out = page.decodedBytes;
+        if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) { return false; }
+        const int result = inflate(&stream, Z_FINISH);
+        inflateEnd(&stream);
+        if (result != Z_STREAM_END || stream.total_out != page.decodedBytes || stream.total_in != page.compressed ||
+            crc32(0, pixels.data() + offsets[i], page.decodedBytes) != page.crc) { return false; }
+    }
+    SDL_GPUTexture *texture = Texture(SDL_GPU_TEXTUREFORMAT_R8_UINT, kHdAtlasWidth,
+                                      static_cast<uint32_t>(pixels.size() / kHdAtlasWidth), false);
+    if (!texture) { return false; }
+    SDL_GPUTransferBufferCreateInfo info{};
+    info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    info.size = static_cast<uint32_t>(pixels.size());
+    SDL_GPUTransferBuffer *transfer = SDL_CreateGPUTransferBuffer(m_device, &info);
+    if (!transfer) { Release(texture); return false; }
+    void *mapped = SDL_MapGPUTransferBuffer(m_device, transfer, false);
+    if (!mapped) { SDL_ReleaseGPUTransferBuffer(m_device, transfer); Release(texture); return false; }
+    std::memcpy(mapped, pixels.data(), pixels.size());
+    SDL_UnmapGPUTransferBuffer(m_device, transfer);
+    SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(m_device);
+    SDL_GPUCopyPass *pass = SDL_BeginGPUCopyPass(cmd);
+    SDL_GPUTextureTransferInfo source{};
+    source.transfer_buffer = transfer;
+    source.pixels_per_row = kHdAtlasWidth;
+    source.rows_per_layer = static_cast<uint32_t>(pixels.size() / kHdAtlasWidth);
+    SDL_GPUTextureRegion target{};
+    target.texture = texture;
+    target.w = kHdAtlasWidth;
+    target.h = source.rows_per_layer;
+    target.d = 1;
+    SDL_UploadToGPUTexture(pass, &source, &target, false);
+    SDL_EndGPUCopyPass(pass);
+    SDL_SubmitGPUCommandBuffer(cmd);
+    SDL_ReleaseGPUTransferBuffer(m_device, transfer);
+    Release(m_stageAtlas);
+    m_stageAtlas = texture;
+    m_activeStagePages = pages;
+    m_stageOffsets = std::move(offsets);
+    return true;
+}
+
+void Gpu::StagePageOffsets(const Frame &frame, uint32_t (&floor)[64], uint32_t (&background)[32]) {
+    m_stageRepeatOffset = m_stageRepeatTile = 0;
+    if (m_stagePages.empty()) { return; }
+    std::vector<int> requests(96 + frame.quads.size(), -1), active;
+    m_stageQuadOffsets.assign(frame.quads.size(), 0);
+    std::vector<std::pair<std::pair<uint32_t, uint32_t>, uint32_t>> banks;
+    const auto bankCrc = [&](uint32_t address, uint32_t size) {
+        const auto key = std::make_pair(address, size);
+        for (const auto &entry : banks) { if (entry.first == key) { return entry.second; } }
+        const uint32_t crc = crc32(0, frame.floor.vram + address, size);
+        banks.push_back({key, crc});
+        return crc;
+    };
+    for (uint32_t slot = 0; slot < 96; ++slot) {
+        uint32_t address;
+        if (slot < 64) {
+            if (((slot % 4 & 1) && !frame.floor.pageShiftH) || ((slot % 4 & 2) && !frame.floor.pageShiftV) || frame.floor.twoWord || frame.floor.fourCell) { continue; }
+            address = frame.floor.planes[slot / 4] + slot % 4 * 8192;
+        } else {
+            address = frame.backgroundPages[(slot - 64) / 16][(slot - 64) % 16];
+        }
+        if (address > 0x7E000) { continue; }
+        const uint32_t crc = crc32(0, frame.floor.vram + address, 8192);
+        for (size_t index = 0; index < m_stagePages.size(); ++index) {
+            const auto &page = m_stagePages[index];
+            const uint32_t palette = page.bank == 0x60000 ? frame.floor.colorOffset :
+                frame.backgroundPaletteOffset[page.bank == 0x10000 ? 0 : 1];
+            if (page.width || palette + page.paletteCount > 2048 || page.mapCrc != crc ||
+                page.paletteCrc != crc32(0, reinterpret_cast<const Bytef *>(frame.colors + palette), page.paletteCount * 4) ||
+                page.cellsCrc != bankCrc(page.bank, page.bytes)) { continue; }
+            requests[slot] = static_cast<int>(index);
+            active.push_back(static_cast<int>(index));
+            break;
+        }
+    }
+    if (frame.quads.empty()) {
+        for (int index : m_activeStagePages) { if (m_stagePages[index].width) { active.push_back(index); } }
+    }
+    std::vector<std::pair<std::array<uint32_t, 3>, uint32_t>> spriteBanks;
+    size_t eventIndex = 0;
+    for (size_t q = 0; q < frame.quads.size(); ++q) {
+        const auto &quad = frame.quads[q];
+        if (!(quad.flags & kQuadTextureUpscale) || ((quad.mode >> 3) & 7) != 0 ||
+            !quad.width || !quad.height || (quad.mode & 0xC0)) { continue; }
+        while (eventIndex < frame.events.size() &&
+               (frame.events[eventIndex].kind != Vdp1Event::Kind::Draw ||
+                q >= frame.events[eventIndex].firstQuad + frame.events[eventIndex].quadCount)) { ++eventIndex; }
+        if (eventIndex >= frame.events.size() || q < frame.events[eventIndex].firstQuad) { continue; }
+        const uint32_t snapshot = frame.events[eventIndex].vram;
+        const auto &vram = frame.vram[snapshot];
+        const uint32_t palette = (frame.spriteColorOffset + (quad.color & 0xFFF0)) & 2047;
+        if (palette + 16 > 2048) { continue; }
+        const uint32_t paletteCrc = crc32(0, reinterpret_cast<const Bytef *>(frame.colors + palette), 64);
+        for (size_t index = 0; index < m_stagePages.size(); ++index) {
+            const auto &page = m_stagePages[index];
+            if (page.width != quad.width || !page.width || page.paletteCrc != paletteCrc ||
+                quad.texture < page.bank || page.bank + page.bytes > vram.size() ||
+                quad.texture + (quad.width * quad.height + 1) / 2 > page.bank + page.bytes ||
+                ((quad.texture - page.bank) * 2) % quad.width != page.phase) { continue; }
+            const std::array<uint32_t, 3> key{snapshot, page.bank, page.bytes};
+            auto found = std::find_if(spriteBanks.begin(), spriteBanks.end(), [&](const auto &entry) { return entry.first == key; });
+            if (found == spriteBanks.end()) {
+                spriteBanks.push_back({key, crc32(0, vram.data() + page.bank, page.bytes)});
+                found = spriteBanks.end() - 1;
+            }
+            if (found->second != page.cellsCrc) { continue; }
+            requests[96 + q] = static_cast<int>(index);
+            active.push_back(static_cast<int>(index));
+            break;
+        }
+    }
+    // Keep all variants of the identified panel bank resident while its camera moves.
+    // Visibility changes must not cause a ZIP inflate and GPU upload every frame.
+    std::vector<int> visibleBanks = active;
+    std::vector<uint32_t> paletteCrcs;
+    for (uint32_t bank = 0; bank < 128; ++bank) {
+        paletteCrcs.push_back(crc32(0, reinterpret_cast<const Bytef *>(
+            frame.colors + bank * 16), 64));
+    }
+    std::vector<std::array<uint32_t, 4>> preparedBanks;
+    for (int visible : visibleBanks) {
+        const auto &bank = m_stagePages[visible];
+        if (!bank.width) { continue; }
+        const std::array<uint32_t, 4> bankKey{bank.bank, bank.bytes, bank.cellsCrc, bank.width};
+        if (std::find(preparedBanks.begin(), preparedBanks.end(), bankKey) != preparedBanks.end()) { continue; }
+        preparedBanks.push_back(bankKey);
+        for (size_t index = 0; index < m_stagePages.size(); ++index) {
+            const auto &page = m_stagePages[index];
+            if (page.width && page.bank == bank.bank && page.bytes == bank.bytes &&
+                page.cellsCrc == bank.cellsCrc &&
+                (page.width == bank.width ||
+                 std::find(m_activeStagePages.begin(), m_activeStagePages.end(), static_cast<int>(index)) != m_activeStagePages.end()) &&
+                std::find(paletteCrcs.begin(), paletteCrcs.end(), page.paletteCrc) != paletteCrcs.end()) {
+                active.push_back(static_cast<int>(index));
+            }
+        }
+    }
+    std::sort(active.begin(), active.end());
+    active.erase(std::unique(active.begin(), active.end()), active.end());
+    if (!LoadStagePages(active)) { return; }
+    for (size_t slot = 0; slot < requests.size(); ++slot) {
+        if (requests[slot] < 0) { continue; }
+        const auto found = std::lower_bound(active.begin(), active.end(), requests[slot]);
+        const uint32_t offset = m_stageOffsets[found - active.begin()] + 1;
+        if (slot < 64) { floor[slot] = offset; }
+        else if (slot < 96) { background[slot - 64] = offset; }
+        else {
+            const auto &page = m_stagePages[requests[slot]];
+            const auto &quad = frame.quads[slot - 96];
+            const uint32_t prefix = (page.width - page.phase) % page.width;
+            m_stageQuadOffsets[slot - 96] = offset + ((quad.texture - page.bank) * 2 + prefix) * 32;
+        }
+    }
+    if (frame.floor.repeatCharacter) {
+        for (uint32_t slot = 0; slot < 64; ++slot) {
+            if (!floor[slot]) { continue; }
+            const uint32_t address = frame.floor.planes[slot / 4] + slot % 4 * 8192;
+            if (address > 0x7E000) { continue; }
+            for (uint32_t cell = 0; cell < 4096; ++cell) {
+                const uint32_t at = address + cell * 2;
+                const uint16_t word = uint16_t(frame.floor.vram[at]) << 8 | frame.floor.vram[at + 1];
+                if (word != frame.floor.repeatName) { continue; }
+                m_stageRepeatOffset = floor[slot];
+                m_stageRepeatTile = ((cell & 63) * 8) | (((cell >> 6) * 8) << 16);
+                return;
+            }
+        }
+    }
+
 }
 
 bool Gpu::MatchesHdText(const Frame &frame, const HdText &text) const {
@@ -667,6 +914,8 @@ void Gpu::Draw(const Frame &frame) {
         m_frozenBackgroundLines.assign(frame.backgroundLines, frame.backgroundLines + 512 * 8);
         m_frozenFrame.backgroundLines = m_frozenBackgroundLines.data();
     }
+    uint32_t stageFloorOffsets[64]{}, stageBackgroundOffsets[32]{};
+    if (m_hdEnabled) { StagePageOffsets(frame, stageFloorOffsets, stageBackgroundOffsets); }
     m_hudApplied = false;
     if (frame.resetSprites) {
         SDL_GPUCommandBuffer *clear = SDL_AcquireGPUCommandBuffer(m_device);
@@ -794,6 +1043,12 @@ void Gpu::Draw(const Frame &frame) {
                 }
             }
         }
+        const auto quadIndex = static_cast<size_t>(&quad - frame.quads.data());
+        if (m_hdEnabled && quadIndex < m_stageQuadOffsets.size() && m_stageQuadOffsets[quadIndex] &&
+            !(v.tex[2] & (static_cast<uint32_t>(kQuadHdTexture) << 16))) {
+            v.tex[0] = m_stageQuadOffsets[quadIndex] - 1;
+            v.tex[2] |= (static_cast<uint32_t>(kQuadHdTexture) | 128u) << 16;
+        }
         for (int i = 0; i < 4; i++) {
             v.gouraud[i] = quad.gouraud[i];
         }
@@ -880,8 +1135,9 @@ void Gpu::Draw(const Frame &frame) {
         SDL_BindGPUVertexBuffers(pass, 0, &binding, 1);
         const SDL_GPUTextureSamplerBinding samplers[] = {
             {m_vram, m_nearest}, {m_hdEnabled ? m_hdAtlas : m_vram, m_nearest},
+            {m_stageAtlas ? m_stageAtlas : m_vram, m_nearest},
         };
-        SDL_BindGPUFragmentSamplers(pass, 0, samplers, 2);
+        SDL_BindGPUFragmentSamplers(pass, 0, samplers, 3);
         SDL_PushGPUVertexUniformData(cmd, 0, vertexUniforms, sizeof(vertexUniforms));
         SDL_PushGPUFragmentUniformData(cmd, 0, fragmentUniforms, sizeof(fragmentUniforms));
         SDL_DrawGPUPrimitives(pass, event.quadCount * 6, 1, event.firstQuad * 6, 0);
@@ -940,6 +1196,14 @@ void Gpu::Draw(const Frame &frame) {
                 }
             }
         }
+        std::memcpy(uniforms.stageFloor, stageFloorOffsets, sizeof(stageFloorOffsets));
+        std::memcpy(uniforms.stageBackground, stageBackgroundOffsets, sizeof(stageBackgroundOffsets));
+        for (uint32_t layer = 0; layer < 2; ++layer) {
+            uniforms.stageShape[layer * 4] = frame.backgroundPageShift[layer][0];
+            uniforms.stageShape[layer * 4 + 1] = frame.backgroundPageShift[layer][1];
+        }
+        uniforms.stageShape[2] = m_hdEnabled ? m_stageRepeatOffset : 0;
+        uniforms.stageShape[3] = m_stageRepeatTile;
         uniforms.misc[1] = static_cast<int32_t>(samples);
         if (m_uiContours) {
             // The normal backgrounds carry the interface. In 3D scenes, NBG0
@@ -1001,14 +1265,15 @@ void Gpu::Draw(const Frame &frame) {
         target.store_op = SDL_GPU_STOREOP_STORE;
         SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &target, 1, nullptr);
         SDL_BindGPUGraphicsPipeline(pass, m_composePipeline);
-        const SDL_GPUTextureSamplerBinding samplers[13] = {
+        const SDL_GPUTextureSamplerBinding samplers[14] = {
             {m_sprites[0], m_nearest}, {m_colors, m_nearest},    {m_layers[0], m_nearest},  {m_layers[1], m_nearest},
             {m_layers[2], m_nearest},  {m_layers[3], m_nearest}, {m_layers[4], m_nearest},  {m_window, m_nearest},
             {m_back, m_nearest},       {m_vram2, m_nearest},     {m_floorLines, m_nearest},
             {m_hdEnabled ? m_hdAtlas : m_vram, m_nearest},
             {m_backgroundLines, m_nearest},
+            {m_stageAtlas ? m_stageAtlas : m_vram, m_nearest},
         };
-        SDL_BindGPUFragmentSamplers(pass, 0, samplers, 13);
+        SDL_BindGPUFragmentSamplers(pass, 0, samplers, 14);
         SDL_PushGPUFragmentUniformData(cmd, 0, &uniforms, sizeof(uniforms));
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
         SDL_EndGPURenderPass(pass);

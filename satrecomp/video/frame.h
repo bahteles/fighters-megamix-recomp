@@ -58,6 +58,9 @@ struct Frame {
     const uint32_t *layers[5] = {}; // RBG0, NBG0..NBG3
     const uint8_t *spriteWindow = nullptr; // 1 where the sprite layer is cut out
     const uint32_t *back = nullptr;        // per row: the back screen's colour; A = 0 where the display is off
+    uint32_t backgroundPages[2][16]{};
+    uint32_t backgroundPaletteOffset[2]{};
+    uint32_t backgroundPageShift[2][2]{};
     const float *backgroundLines = nullptr; // two scrolling layers, two vec4s per screen row
     const uint32_t *colors = nullptr;      // colour RAM as 2048 colours
 
@@ -76,6 +79,8 @@ struct Frame {
         uint8_t over = 0; // outside the map: 0 it repeats, 1 nothing, 2 nothing outside the first 512x512
         uint8_t pageShiftH = 0, pageShiftV = 0, priority = 0, access = 0xFF;
         uint32_t colorOffset = 0, moreNumber = 0, morePalette = 0;
+        uint16_t repeatName = 0;
+        bool repeatCharacter = false;
     } floor;
 
     // How the VDP2 reads the sprite framebuffer

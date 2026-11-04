@@ -23,6 +23,8 @@ layout(set = 2, binding = 11) uniform usampler2D hdAtlas;
 
 layout(set = 2, binding = 12) uniform sampler2D backgroundLines;
 
+layout(set = 2, binding = 13) uniform usampler2D stageAtlas;
+
 layout(set = 3, binding = 0, std140) uniform FragmentUniforms {
     vec4 size;      // xy: the VDP2 picture's size; zw: the sprite target's size
     ivec4 sprite;   // sprite type, mixed RGB/palette, flags (1 window used, 2 enabled, 4 inverted, 8 sprites on), colour offset
@@ -39,6 +41,9 @@ layout(set = 3, binding = 0, std140) uniform FragmentUniforms {
     uvec4 hdAirport;    // offset of the optional airport map in the replacement atlas
     ivec4 menuBackground; // 1 title gray, 2 repeating menu checkerboard
     uvec4 hdBackground;
+    uvec4 stageFloor[16];
+    uvec4 stageBackground[8];
+    uvec4 stageShape[2];
 };
 
 layout(location = 0) out vec4 out_color;
@@ -170,6 +175,49 @@ uint hdByte(uint address) {
     return texelFetch(hdAtlas, ivec2(int(address & 16383u), int(address >> 14)), 0).r;
 }
 
+uint stageByte(uint address) {
+    return texelFetch(stageAtlas, ivec2(int(address & 16383u), int(address >> 14)), 0).r;
+}
+
+vec3 stagePixel(uint offset, vec2 where, vec3 original) {
+    if (offset == 0u) { return original; }
+    uvec2 p = uvec2(mod(where, 512.0) * 2.0);
+    uint address = offset - 1u + 4u * (p.y * 1024u + p.x);
+    if (stageByte(address + 3u) == 0u) { return original; }
+    return vec3(stageByte(address), stageByte(address + 1u), stageByte(address + 2u)) / 255.0;
+}
+
+vec3 stageFloorLayer(vec2 at, vec3 original) {
+    float row = at.y * float(floorSize.x) - 0.5;
+    int nearest = clamp(int(floor(row + 0.5)), 0, floorSize.x - 1);
+    float kind = texelFetch(floorLines, ivec2(1, nearest), 0).x;
+    if (kind != 1.0 && kind != 3.0) { return original; }
+    vec4 ends = texelFetch(floorLines, ivec2(0, nearest), 0);
+    int l0 = clamp(int(floor(row)), 0, floorSize.x - 1);
+    int l1 = min(l0 + 1, floorSize.x - 1);
+    if (texelFetch(floorLines, ivec2(1, l0), 0).x == kind &&
+        texelFetch(floorLines, ivec2(1, l1), 0).x == kind) {
+        ends = mix(texelFetch(floorLines, ivec2(0, l0), 0), texelFetch(floorLines, ivec2(0, l1), 0),
+                   clamp(row - float(l0), 0.0, 1.0));
+    }
+    float dots = float(floorSize.y);
+    vec2 where = mix(ends.xy, ends.zw, (at.x * dots - 0.5) / max(dots - 1.0, 1.0));
+    int sh = (floorSize.z >> 12) & 1, sv = (floorSize.z >> 13) & 1;
+    vec2 mapSize = vec2(2048 << sh, 2048 << sv);
+    if (((floorSize.z >> 8) & 3) != 0 && (any(lessThan(where, vec2(0.0))) || any(greaterThanEqual(where, mapSize)))) {
+        if (kind == 3.0 && stageShape[0].z != 0u) {
+            uint tile = stageShape[0].w;
+            vec2 origin = vec2(tile & 65535u, tile >> 16);
+            return stagePixel(stageShape[0].z, origin + mod(where, 8.0), original);
+        }
+        return original;
+    }
+    uvec2 m = uvec2(mod(where, mapSize));
+    uint plane = ((m.x >> (9 + sh)) & 3u) + (((m.y >> (9 + sv)) & 3u) << 2);
+    uint page = ((m.x >> 9) & uint(sh)) + (((m.y >> 9) & uint(sv)) << 1);
+    return stagePixel(stageFloor[plane][page], where, original);
+}
+
 vec3 airportFloor(vec2 at, vec3 original) {
     if (hdAirport.x == 0u) {
         return original;
@@ -202,7 +250,7 @@ vec3 airportFloor(vec2 at, vec3 original) {
 }
 
 vec4 backgroundLayer(vec4 original, int layer, vec2 at) {
-    if (layer > 1 || hdBackground[layer] == 0u || original.a == 0.0) { return original; }
+    if (layer > 1 || original.a == 0.0) { return original; }
     float row = at.y * size.y - 0.5;
     int nearest = clamp(int(floor(row + 0.5)), 0, int(size.y) - 1);
     vec4 coordinates = texelFetch(backgroundLines, ivec2(layer, nearest), 0);
@@ -212,6 +260,15 @@ vec4 backgroundLayer(vec4 original, int layer, vec2 at) {
     float dy = mod(following.y - coordinates.y + 512.0, 1024.0) - 512.0;
     float y = coordinates.y + dy * (row - float(nearest));
     vec2 where = mod(vec2(coordinates.x + (at.x * size.x - 0.5) * coordinates.z, y), 1024.0);
+    int sh = int(stageShape[layer].x), sv = int(stageShape[layer].y);
+    vec2 world = mod(vec2(coordinates.x + (at.x * size.x - 0.5) * coordinates.z, y), vec2(1024 << sh, 1024 << sv));
+    uvec2 m = uvec2(world);
+    uint plane = ((m.x >> (9 + sh)) & 1u) + (((m.y >> (9 + sv)) & 1u) << 1);
+    uint page = ((m.x >> 9) & uint(sh)) + (((m.y >> 9) & uint(sv)) << 1);
+    uint slot = uint(layer) * 16u + plane * 4u + page;
+    uint replacement = stageBackground[slot / 4u][slot % 4u];
+    if (replacement != 0u) { return vec4(stagePixel(replacement, world, original.rgb), original.a); }
+    if (hdBackground[layer] == 0u) { return original; }
     // The distant panorama uses the same page in both horizontal planes.
     if (layer == 1) { where.x = mod(where.x, 512.0); }
     if (any(greaterThanEqual(where, vec2(512.0)))) { return original; }
@@ -363,7 +420,7 @@ vec3 pixel(vec2 at) {
         layer = texelFetch(rbg0, cell, 0);
     }
     layerPriority = int(layer.a * 255.0 + 0.5);
-    if (layerPriority > topPriority) { top = 1; topPriority = layerPriority; color = airportFloor(at, layer.rgb); }
+    if (layerPriority > topPriority) { top = 1; topPriority = layerPriority; color = stageFloorLayer(at, airportFloor(at, layer.rgb)); }
     layer = textLayer(backgroundLayer(texelFetch(nbg0, cell, 0), 0, at), 0, at, cell);
     layerPriority = int(layer.a * 255.0 + 0.5);
     if (layerPriority > topPriority) { top = 2; topPriority = layerPriority; color = layer.rgb; }

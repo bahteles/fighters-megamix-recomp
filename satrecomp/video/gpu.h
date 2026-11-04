@@ -157,6 +157,19 @@ private:
     struct HdBackground { uint32_t offset, map, cells, cellBytes, palette, crc[3]; };
     std::vector<HdBackground> m_hdBackgrounds;
     SDL_GPUTexture *m_backgroundLines = nullptr;
+    struct StagePage {
+        uint32_t bank, bytes, cellsCrc, mapCrc, paletteCount, paletteCrc, compressed, crc;
+        uint32_t width, phase, decodedBytes;
+        uint64_t fileOffset;
+    };
+    std::vector<StagePage> m_stagePages;
+    std::vector<int> m_activeStagePages;
+    std::vector<uint32_t> m_stageOffsets, m_stageQuadOffsets;
+    SDL_GPUTexture *m_stageAtlas = nullptr;
+    uint32_t m_stageRepeatOffset = 0, m_stageRepeatTile = 0;
+    void IndexStagePages();
+    bool LoadStagePages(const std::vector<int> &pages);
+    void StagePageOffsets(const Frame &frame, uint32_t (&floor)[64], uint32_t (&background)[32]);
     Frame m_frozenFrame, m_pendingSprites, m_displaySprites;
     std::vector<uint32_t> m_frozenLayers[5], m_frozenBack, m_frozenColors;
     std::vector<uint8_t> m_frozenWindow, m_frozenVram2;

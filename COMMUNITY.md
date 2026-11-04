@@ -8,7 +8,8 @@ The original authors retain their credits. The GPL-3.0 license and third-party n
 - Additional sound mailbox wait time after returning to fighter selection.
 - Widescreen corrections for victory sprites and credits replay letterboxing.
 - Optional HD texture replacement from a ZIP selected in the launcher.
-- F10 toggles the selected texture pack.
+- F10 toggles the selected texture pack, including while frozen with F4.
+- Batched stage maps and indexed panel replacements, loaded per stage from the optional ZIP.
 - Widescreen title and checkerboard menu backgrounds.
 - Windows launcher starts without a console and launches games without a new console.
 

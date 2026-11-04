@@ -12,6 +12,7 @@ layout(location = 5) flat in uvec4 v_gouraud;
 
 layout(set = 2, binding = 0) uniform usampler2D vram; // VDP1 video memory, 1024 bytes a row
 layout(set = 2, binding = 1) uniform usampler2D hdAtlas;
+layout(set = 2, binding = 2) uniform usampler2D stageAtlas;
 
 layout(set = 3, binding = 0, std140) uniform FragmentUniforms {
     vec4 scale; // x: target pixels per VDP1 pixel; y: texture upscale enabled
@@ -27,7 +28,8 @@ uint fetch8(uint address) {
     return texelFetch(vram, ivec2(int(address & 1023u), int((address >> 10) & 511u)), 0).r;
 }
 uint fetch_hd_byte(uint address) {
-    return texelFetch(hdAtlas, ivec2(int(address & 16383u), int(address >> 14)), 0).r;
+    ivec2 p = ivec2(int(address & 16383u), int(address >> 14));
+    return (v_tex.z & (128u << 16)) != 0u ? texelFetch(stageAtlas, p, 0).r : texelFetch(hdAtlas, p, 0).r;
 }
 
 uint fetch16(uint address) {

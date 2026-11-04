@@ -824,6 +824,8 @@ void Renderer::FloorSettings(Frame &frame) const {
     floor.pageShiftH = static_cast<uint8_t>(params.pageShiftH);
     floor.pageShiftV = static_cast<uint8_t>(params.pageShiftV);
     floor.priority = bg.priorityNumber;
+    floor.repeatName = params.screenOverPatternName;
+    floor.repeatCharacter = params.screenOverProcess == ScreenOverProcess::RepeatChar;
     floor.colorOffset = bg.cramOffset;
     floor.moreNumber = bg.supplScrollCharNum;
     floor.morePalette = bg.supplScrollPalNum;

@@ -653,12 +653,12 @@ void Renderer::GpuRow(uint32 row, uint32 y, bool otherField) {
         const auto &scroll = m_scroll[index];
         float *coordinates = &m_backgroundLines[row * 8 + index * 4];
         const uint32 fracX = scroll.fracX + bg.scrollAmountH - WideDots() * scroll.incH;
-        coordinates[0] = static_cast<float>(fracX & 0x3FFFF) / 256.0f;
-        coordinates[1] = static_cast<float>((scroll.fracY + bg.scrollAmountV) & 0x3FFFF) / 256.0f;
+        coordinates[0] = static_cast<float>(fracX & 0xFFFFF) / 256.0f;
+        coordinates[1] = static_cast<float>((scroll.fracY + bg.scrollAmountV) & 0xFFFFF) / 256.0f;
         coordinates[2] = static_cast<float>(scroll.incH) / 256.0f;
         coordinates[3] = !bg.bitmap && !bg.mosaicEnable && !bg.vcellScrollEnable &&
-                         bg.cellSizeShift == 0 && !bg.twoWordChar && bg.extChar &&
-                         bg.pageShiftH == 0 && bg.pageShiftV == 0 ? 1.0f : 0.0f;
+                         bg.cellSizeShift == 0 && !bg.twoWordChar &&
+                         bg.pageShiftH <= 1 && bg.pageShiftV <= 1 ? 1.0f : 0.0f;
     }
     const bool rbg1 = regs2.bgEnabled[5];
     for (uint32 layer = 1; layer <= 5; layer++) {
@@ -783,6 +783,17 @@ void Renderer::GpuEndFrame() {
         frame.colors = m_colorImage.data();
         m_backgroundLines.resize(512 * 8);
         frame.backgroundLines = m_backgroundLines.data();
+        for (uint32 index = 0; index < 2; ++index) {
+            const auto &bg = regs2.bgParams[index + 1];
+            frame.backgroundPaletteOffset[index] = bg.cramOffset;
+            frame.backgroundPageShift[index][0] = bg.pageShiftH;
+            frame.backgroundPageShift[index][1] = bg.pageShiftV;
+            for (uint32 plane = 0; plane < 4; ++plane) {
+                for (uint32 page = 0; page < 4; ++page) {
+                    frame.backgroundPages[index][plane * 4 + page] = bg.pageBaseAddresses[plane] + page * 8192;
+                }
+            }
+        }
         frame.spriteType = params.type;
         frame.spriteMixed = params.mixedFormat;
         frame.spriteWindowUsed = params.useSpriteWindow;
