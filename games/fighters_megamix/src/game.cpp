@@ -58,8 +58,20 @@ void RegisterUnlocks() {
 } // namespace
 
 void RegisterGame() {
+    const Lift audioWait = {"Sound mailbox timeout", 0x06014880, 0x1C, 0xAA8D47BFBDA96846ull, [](Guest &g) {
+        // A00802FF can still be pending when the next sound command is queued after
+        // returning to fighter select. If this wait expires, the game disables queued SFX
+        // until it reinitializes sound. Give the sound CPU more time to clear the mailbox.
+        constexpr uint32_t kTimeout = 0x060148A0;
+        if (g.Read32(kTimeout) == 0x10000) {
+            g.Write32(kTimeout, 0x40000);
+        }
+        return false; // Run the original bounded wait with the adjusted timeout.
+    }};
+    RegisterLifts(&audioWait, 1);
     RegisterShared();
     RegisterUnlocks();
+    TheGame().wideLetterboxLayer = 2; // NBG2 draws the credits replay bars.
     // Widescreen: the stages' panels (the cages, fences and walls) are listed by four of the engine's routines,
     // each with its own copy of a limit on how far off the picture's middle a panel may be (the toolkit's
     // shared::WidenAm2PanelLimits): two shaped as in Fighting Vipers (the limit loaded at 0x06020BC4 and

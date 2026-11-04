@@ -49,6 +49,7 @@ enum PadButton : uint16_t {
 struct Options {
     std::string biosPath;
     std::string discPath;
+    std::string texturePackPath;
     std::string backupPath;   // internal backup memory image (created when missing)
     std::string moviePlay;    // input movie to replay
     std::string movieRecord;  // input movie to write

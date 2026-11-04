@@ -19,6 +19,8 @@ layout(set = 2, binding = 9) uniform usampler2D vram2;   // VDP2 video memory, 1
 layout(set = 2, binding = 10) uniform sampler2D floorLines; // the rotation screen, per line: [0] where its first
                                                             // and last dots look in the map, [1].x what the line is
 
+layout(set = 2, binding = 11) uniform usampler2D hdAtlas;
+
 layout(set = 3, binding = 0, std140) uniform FragmentUniforms {
     vec4 size;      // xy: the VDP2 picture's size; zw: the sprite target's size
     ivec4 sprite;   // sprite type, mixed RGB/palette, flags (1 window used, 2 enabled, 4 inverted, 8 sprites on), colour offset
@@ -26,10 +28,14 @@ layout(set = 3, binding = 0, std140) uniform FragmentUniforms {
     ivec4 priHigh;
     ivec4 misc;     // x: which layers take sprite shadows (bit 1 RBG0 .. bit 5 NBG3, bit 6 back); y: samples a side;
                     // z: columns at each side of the picture that show black (widescreen, in a scene without)
+    ivec4 hdText[8]; // left, top, width, height of replacement graphics
+    ivec4 hdTextMeta[2]; // packed atlas offset, scale and layer
     vec4 colorOffset[7]; // added to the colour of the layer shown (sprites, RBG0, NBG0..3, back), for fades
     ivec4 floorSize;     // the rotation screen: lines of a field, dots a line, flags, priority
     ivec4 floorMore;     // its colour offset, the extra bits of its character numbers and palettes, memory access
     uvec4 floorPlanes[4]; // the addresses of the 4x4 planes of its map
+    uvec4 hdAirport;    // offset of the optional airport map in the replacement atlas
+    ivec4 menuBackground; // 1 title gray, 2 repeating menu checkerboard
 };
 
 layout(location = 0) out vec4 out_color;
@@ -157,10 +163,126 @@ vec4 floorLayer(vec2 at) {
     return vec4(texelFetch(colors, ivec2(int(index & 2047u), 0), 0).rgb, float(priority) / 255.0);
 }
 
+uint hdByte(uint address) {
+    return texelFetch(hdAtlas, ivec2(int(address & 16383u), int(address >> 14)), 0).r;
+}
+
+vec3 airportFloor(vec2 at, vec3 original) {
+    if (hdAirport.x == 0u) {
+        return original;
+    }
+    float line = at.y * float(floorSize.x) - 0.5;
+    int nearest = clamp(int(floor(line + 0.5)), 0, floorSize.x - 1);
+    if (texelFetch(floorLines, ivec2(1, nearest), 0).x != 3.0) {
+        return original;
+    }
+    int l0 = clamp(int(floor(line)), 0, floorSize.x - 1);
+    int l1 = min(l0 + 1, floorSize.x - 1);
+    vec4 ends = texelFetch(floorLines, ivec2(0, nearest), 0);
+    if (texelFetch(floorLines, ivec2(1, l0), 0).x == 3.0 &&
+        texelFetch(floorLines, ivec2(1, l1), 0).x == 3.0) {
+        ends = mix(texelFetch(floorLines, ivec2(0, l0), 0), texelFetch(floorLines, ivec2(0, l1), 0), clamp(line - float(l0), 0.0, 1.0));
+    }
+    float dots = float(floorSize.y);
+    vec2 where = mix(ends.xy, ends.zw, (at.x * dots - 0.5) / max(dots - 1.0, 1.0));
+    if (any(lessThan(where, vec2(0.0))) || any(greaterThanEqual(where, vec2(2048.0)))) {
+        return original;
+    }
+    uint address;
+    if (all(greaterThanEqual(where, vec2(512.0))) && all(lessThan(where, vec2(1536.0)))) {
+        uvec2 pixel = uvec2((where - vec2(512.0)) * 2.0);
+        address = hdAirport.x + 3u * (pixel.y * 2048u + pixel.x);
+    } else {
+        uvec2 pixel = uvec2(mod(where, 512.0) * 2.0);
+        address = hdAirport.x + 3u * (2048u * 2048u + pixel.y * 1024u + pixel.x);
+    }
+    return vec3(hdByte(address), hdByte(address + 1u), hdByte(address + 2u)) / 255.0;
+}
+
+vec4 uiPixel(int layer, ivec2 p) {
+    p = clamp(p, ivec2(0), ivec2(size.xy) - 1);
+    switch (layer) {
+    case 0: return texelFetch(nbg0, p, 0);
+    case 1: return texelFetch(nbg1, p, 0);
+    case 2: return texelFetch(nbg2, p, 0);
+    default: return texelFetch(nbg3, p, 0);
+    }
+}
+
+int uiClass(vec4 color) {
+    if (color.a == 0.0) { return 0; }
+    return max(max(color.r, color.g), color.b) < 0.125 ? 1 : 2;
+}
+
+// Reconstruct a sharp silhouette on an eight-sample grid, keeping the source
+// colour and priority of the nearest pixel on the selected side of the edge.
+vec4 uiContour(vec4 original, int layer, vec2 at) {
+    if ((misc.x & (128 << layer)) == 0) { return original; }
+    vec2 p = (floor(at * size.xy * 8.0) + 0.5) / 8.0 - 0.5;
+    ivec2 q = ivec2(floor(p));
+    vec2 f = fract(p);
+    vec4 a = uiPixel(layer, q);
+    vec4 b = uiPixel(layer, q + ivec2(1, 0));
+    vec4 c = uiPixel(layer, q + ivec2(0, 1));
+    vec4 d = uiPixel(layer, q + 1);
+    ivec4 kinds = ivec4(uiClass(a), uiClass(b), uiClass(c), uiClass(d));
+    if (all(equal(kinds, ivec4(kinds.x)))) { return original; }
+    vec4 weights = vec4((1.0-f.x)*(1.0-f.y), f.x*(1.0-f.y), (1.0-f.x)*f.y, f.x*f.y);
+    float opaque = dot(weights, mix(vec4(0), vec4(1), notEqual(kinds, ivec4(0))));
+    if (opaque < 0.5) { return vec4(0); }
+    float light = dot(weights, mix(vec4(0), vec4(1), equal(kinds, ivec4(2))));
+    int kind = light >= 0.5 * opaque ? 2 : 1;
+    if (kind == uiClass(original)) { return original; }
+    weights = mix(vec4(-1), weights, equal(kinds, ivec4(kind)));
+    if (weights.x >= max(max(weights.y, weights.z), weights.w)) { return a; }
+    if (weights.y >= max(weights.z, weights.w)) { return b; }
+    return weights.z >= weights.w ? c : d;
+}
+
+vec4 textLayer(vec4 original, int layer, vec2 at, ivec2 cell) {
+    for (int i = 0; i < misc.w; ++i) {
+        ivec4 area = hdText[i];
+        int meta = hdTextMeta[i / 4][i % 4];
+        if ((meta & 3) != layer || any(lessThan(cell, area.xy)) ||
+            any(greaterThanEqual(cell, area.xy + area.zw))) { continue; }
+        int scale = (meta & 4) != 0 ? 8 : 4;
+        ivec2 p = clamp(ivec2(floor((at * size.xy - vec2(area.xy)) * float(scale))), ivec2(0), area.zw * scale - 1);
+        uint address = uint((meta >> 3) + 4 * (p.x + p.y * area.z * scale));
+        return vec4(hdByte(address), hdByte(address + 1u), hdByte(address + 2u), hdByte(address + 3u)) / 255.0;
+    }
+    return uiContour(original, layer, at);
+}
+
 vec3 pixel(vec2 at) {
     ivec2 cell = clamp(ivec2(floor(at * size.xy)), ivec2(0), ivec2(size.xy) - 1);
-    if (cell.x < misc.z || cell.x >= int(size.x) - misc.z) {
-        return vec3(0.0);
+    bool outsideMenu = cell.x < misc.z || cell.x >= int(size.x) - misc.z;
+    bool headerEdge = misc.z > 0 && menuBackground.x == 2 && cell.y < int(size.y) / 8 &&
+                      (cell.x < misc.z + 64 || cell.x >= int(size.x) - misc.z - 64);
+    if (outsideMenu || headerEdge) {
+        vec4 edgeBack = texelFetch(back, ivec2(0, cell.y), 0);
+        if (edgeBack.a < 0.5 || menuBackground.x == 0) {
+            return vec3(0.0);
+        }
+        int x = misc.z + 4;
+        if (menuBackground.x == 2) {
+            // A full checker period continues with the same phase on either side.
+            x = misc.z + ((cell.x - misc.z) % 32 + 32) % 32;
+        }
+        vec4 background = uiPixel(menuBackground.y, ivec2(x, cell.y));
+        int layer = 2 + menuBackground.y;
+        if (menuBackground.x == 2 && cell.y < int(size.y) / 8) {
+            for (int i = 0; i < 4; ++i) {
+                int headerX = cell.x < int(size.x) / 2
+                    ? misc.z + min(cell.x, 64)
+                    : int(size.x) - misc.z - 1 - min(int(size.x) - 1 - cell.x, 64);
+                vec4 header = uiPixel(i, ivec2(headerX, cell.y));
+                if (header.a > background.a) {
+                    background = header;
+                    layer = 2 + i;
+                }
+            }
+        }
+        return clamp(background.rgb + colorOffset[layer].rgb, 0.0, 1.0);
     }
     vec4 backColor = texelFetch(back, ivec2(0, cell.y), 0);
     if (backColor.a < 0.5) {
@@ -219,22 +341,23 @@ vec3 pixel(vec2 at) {
         layer = texelFetch(rbg0, cell, 0);
     }
     layerPriority = int(layer.a * 255.0 + 0.5);
-    if (layerPriority > topPriority) { top = 1; topPriority = layerPriority; color = layer.rgb; }
-    layer = texelFetch(nbg0, cell, 0);
+    if (layerPriority > topPriority) { top = 1; topPriority = layerPriority; color = airportFloor(at, layer.rgb); }
+    layer = textLayer(texelFetch(nbg0, cell, 0), 0, at, cell);
     layerPriority = int(layer.a * 255.0 + 0.5);
     if (layerPriority > topPriority) { top = 2; topPriority = layerPriority; color = layer.rgb; }
-    layer = texelFetch(nbg1, cell, 0);
+    layer = textLayer(texelFetch(nbg1, cell, 0), 1, at, cell);
     layerPriority = int(layer.a * 255.0 + 0.5);
     if (layerPriority > topPriority) { top = 3; topPriority = layerPriority; color = layer.rgb; }
-    layer = texelFetch(nbg2, cell, 0);
+    layer = textLayer(texelFetch(nbg2, cell, 0), 2, at, cell);
     layerPriority = int(layer.a * 255.0 + 0.5);
     if (layerPriority > topPriority) { top = 4; topPriority = layerPriority; color = layer.rgb; }
-    layer = texelFetch(nbg3, cell, 0);
+    layer = textLayer(texelFetch(nbg3, cell, 0), 3, at, cell);
     layerPriority = int(layer.a * 255.0 + 0.5);
     if (layerPriority > topPriority) { top = 5; topPriority = layerPriority; color = layer.rgb; }
 
     // A shadow pixel of the sprite layer halves the brightness of the layer shown, if that layer takes shadows
-    if (special == 2 || (!windowUsed && shadowBit)) {
+    bool shadowPixel = special == 2 || (!windowUsed && shadowBit);
+    if (shadowPixel) {
         bool takes = top == 0 ? shadowBit : ((misc.x >> top) & 1) != 0;
         if (takes) {
             color = floor(color * 255.0 + 0.5) * 0.5 / 255.0;

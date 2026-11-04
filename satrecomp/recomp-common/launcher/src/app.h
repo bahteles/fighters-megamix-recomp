@@ -155,6 +155,7 @@ private:
 
     // Game file.
     void choose_game_file(size_t which);
+    void choose_texture_pack();
     void use_game_file(size_t which, const std::string& path);
     void play(size_t which, const std::vector<std::string>& extra = {});
     // A collection's: every game's file looked for in a folder (on a thread), or a file or folder given to
@@ -310,6 +311,7 @@ private:
     std::string picked_;  // from the file dialog (another thread)
     size_t picked_for_ = 0;
     bool picked_folder_ = false;
+    std::string picked_texture_pack_; // protected by mutex_
     int picked_choice_ = -1;  // (under mutex_) the Sound card's folder the dialog was for (-1: none)
     std::atomic<bool> finding_{false};  // looking in a folder for the games' files
     std::thread finder_;

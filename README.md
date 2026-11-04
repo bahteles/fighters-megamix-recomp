@@ -1,3 +1,6 @@
+> **Community fork maintained by bahteles.** Based on Tommy McLeroy's Fighters Megamix recompilation.
+> This fork contains custom fixes and optional texture replacement support. See [COMMUNITY.md](COMMUNITY.md).
+
 # Fighters Megamix Recomp
 
 An unofficial native PC port of *Fighters Megamix* (Sega AM2, Sega Saturn, 1997) for macOS, Linux, SteamOS and

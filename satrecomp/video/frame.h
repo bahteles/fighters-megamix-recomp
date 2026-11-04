@@ -28,6 +28,8 @@ enum : uint16_t {
     kQuadFlipH = 2,
     kQuadFlipV = 4,
     kQuadErase = 8,
+    kQuadHdTexture = 64, // the backend substituted a 4x texture
+    kQuadTextureUpscale = 32, // distorted sprites can use edge-aware texture sampling
     kQuadOddColumns = 16, // when shrinking at high speed, the odd texture columns are the ones used
 };
 
@@ -61,7 +63,8 @@ struct Frame {
     // The rotation screen (the floor, in most 3D games), for a backend to draw at its own resolution. Per line
     // of a field 8 floats: where the line's first and last dots look in the map (x, y, x, y; in dots), then
     // 1 if the line shows the map there, 0 if nothing, 2 if the line is in layers[0] instead (drawn by the
-    // renderer because of something a backend does not do).
+    // renderer because of something a backend does not do), or 3 if the layer is also in layers[0] but
+    // the coordinates are available for a replacement map.
     struct Floor {
         const float *lines = nullptr;
         uint32_t lineCount = 0, dots = 0; // lines of a field, dots a line

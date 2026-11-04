@@ -71,6 +71,7 @@ struct Game {
     // takes effect when the game next reads the file (at its start, or a reset).
     SaveUnlocks saveUnlocks;
     std::vector<WideSplit> wideSplits;
+    int wideLetterboxLayer = -1; // NBG layer with full-width black replay bars, if any
     void (*frame)() = nullptr;                                     // after every frame the game ran
     void (*state)(Archive &ar) = nullptr;                          // the game sources' own state, for save states
     // A training session is on (the game's own idea of one): the training aids (kFeatureTraining) work only

@@ -255,6 +255,11 @@ std::vector<std::string> arguments_for(const recomp::Ini& prefs, const Target& t
             arguments.push_back(chosen);
         }
     }
+    const auto pack = prefs.get("texture_pack", "path");
+    if (!pack.empty()) {
+        arguments.emplace_back("--texture-pack");
+        arguments.push_back(pack);
+    }
     return arguments;
 }
 
@@ -917,6 +922,19 @@ void App::choose_game_file(size_t which) {
         this, window_, &one.about->file_filter, 1, start.empty() ? nullptr : start.c_str(), false);
 }
 
+void App::choose_texture_pack() {
+    static const SDL_DialogFileFilter filter{"HD Texture Pack", "zip"};
+    SDL_ShowOpenFileDialog(
+        [](void* self, const char* const* files, int) {
+            if (files && files[0]) {
+                App* app = static_cast<App*>(self);
+                std::lock_guard<std::mutex> lock(app->mutex_);
+                app->picked_texture_pack_ = files[0];
+            }
+            wake();
+        }, this, window_, &filter, 1, nullptr, false);
+}
+
 void App::choose_folder() {
     picked_for_ = kAnyGame;
 #ifdef __ANDROID__
@@ -1246,7 +1264,7 @@ bool App::consume(const SDL_Event& event) {
 }
 
 void App::frame() {
-    std::string picked;
+    std::string picked, texture_pack;
     bool picked_folder = false;
     int picked_choice = -1;
     std::vector<std::pair<size_t, std::string>> found;
@@ -1254,6 +1272,7 @@ void App::frame() {
     {
         std::lock_guard<std::mutex> lock(mutex_);
         picked.swap(picked_);
+        texture_pack.swap(picked_texture_pack_);
         picked_folder = picked_folder_;
         if (!picked.empty()) {
             picked_choice = picked_choice_;
@@ -1262,6 +1281,10 @@ void App::frame() {
         found.swap(found_);
         found_ready = found_ready_;
         found_ready_ = false;
+    }
+    if (!texture_pack.empty()) {
+        prefs_.set("texture_pack", "path", texture_pack);
+        prefs_.save();
     }
     if (!picked.empty() && picked_choice >= 0) {
         set_folder_choice(picked_for_, picked_choice, picked);
@@ -1790,6 +1813,36 @@ void App::display_cards(size_t which, float width) {
             });
         }
         display.end();
+    }
+    const auto hd = std::find_if(one.features.begin(), one.features.end(), [](const auto& feature) {
+        return feature.name == "hd_texture_pack";
+    });
+    if (hd != one.features.end()) {
+        const auto index = static_cast<size_t>(hd - one.features.begin());
+        bool enabled = recomp::FeatureValues(one.settings, one.features)[index] != 0;
+        ui::gap(16);
+        Card pack_card(width);
+        const auto pack = prefs_.get("texture_pack", "path");
+        row(width, "HD Texture Pack", "Use the selected ZIP with High Resolution.", 42.0f, 24.0f, [&] {
+            if (ui::toggle("##hd-pack-enabled", enabled)) {
+                set_feature(one, index, enabled ? 0 : 1);
+            }
+        });
+        inset_separator(width);
+        row(width, "ZIP file", pack.empty() ? "Choose a local texture pack." : pack.c_str(),
+            155.0f, 36.0f, [&] {
+                if (ui::button("Browse###texture-pack", Kind::Secondary, 85.0f)) {
+                    choose_texture_pack();
+                }
+                if (!pack.empty()) {
+                    ImGui::SameLine();
+                    if (ui::button("Clear###texture-pack", Kind::Secondary, 60.0f)) {
+                        prefs_.set("texture_pack", "path", "");
+                        prefs_.save();
+                    }
+                }
+            });
+        pack_card.end();
     }
     if (one.about->mute_argument || !one.about->folders.empty()) {
         ui::gap(24);
@@ -3043,7 +3096,9 @@ void App::title_page(size_t which, float width) {
             return std::any_of(s.where.begin(), s.where.end(), [&](const auto& at) { return at.first == which && at.second == i; });
         });
         if (!shared) {
-            rows.push_back({&one.features[i], values[i], "", i});
+            if (one.features[i].name != "hd_texture_pack") {
+                rows.push_back({&one.features[i], values[i], "", i});
+            }
         }
     }
     feature_list(
@@ -3567,7 +3622,9 @@ void App::features_page(float width) {
         std::vector<int> values = recomp::FeatureValues(one.settings, one.features);
         std::vector<FeatureRow> rows;
         for (size_t i = 0; i < one.features.size(); i++) {
-            rows.push_back({&one.features[i], values[i], "", i});
+            if (one.features[i].name != "hd_texture_pack") {
+                rows.push_back({&one.features[i], values[i], "", i});
+            }
         }
         feature_list(
             width, rows, "No optional features yet.", [&](const FeatureRow& feature, int value) { set_feature(one, feature.index, value); },

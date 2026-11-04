@@ -10,6 +10,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 namespace satrecomp::video {
@@ -41,6 +42,11 @@ public:
 
     // Does a frame's VDP1 work and makes the picture, in Output()
     void Draw(const Frame &frame);
+    void SetUiContours(bool enabled) { m_uiContours = enabled; }
+    void SetHdTexturePack(bool enabled);
+    bool HdTexturePackEnabled() const { return m_hdEnabled; }
+    void SetHdTexturePackPath(const std::string &path) { m_hdPackPath = path; }
+    void SetTextureUpscale(bool enabled) { m_textureUpscale = enabled; }
     // Run-ahead (port/main.cpp): the VDP1's two framebuffers as drawn here are kept before frames that will
     // be taken back, and put back after them (so the next frame draws on what it would have without them).
     // The picture made meanwhile stays: it is the one shown.
@@ -131,6 +137,27 @@ private:
     uint32_t m_spriteWidth = 0, m_spriteHeight = 0, m_scale = 0, m_fixedScale = 0;
     uint32_t m_layerWidth = 0, m_layerHeight = 0;
     uint32_t m_outputWidth = 0, m_outputHeight = 0, m_wantedWidth = 640, m_wantedHeight = 480;
+    struct HdTexture {
+        uint16_t width, height;
+        uint32_t offset;
+        std::vector<uint8_t> original;
+    };
+    std::vector<HdTexture> m_hdTextures;
+    std::string m_hdPackPath;
+    SDL_GPUTexture *m_hdAtlas = nullptr;
+    struct HdText {
+        int32_t leftFromCenter;
+        uint32_t top, width, height, layer, scale, offset;
+        std::vector<uint32_t> original;
+    };
+    std::vector<HdText> m_hdText;
+    uint32_t m_hdAirportOffset = 0;
+    uint32_t m_hdAirportCrc[3]{};
+    bool MatchesHdText(const Frame &frame, const HdText &text) const;
+    bool m_hdEnabled = false, m_hdAttempted = false;
+    bool LoadHdTexturePack();
+    bool m_uiContours = false;
+    bool m_textureUpscale = false;
     float m_aspect = 4.0f / 3.0f;
     int m_scaling = 0, m_shape = 0;
     bool m_native = false;

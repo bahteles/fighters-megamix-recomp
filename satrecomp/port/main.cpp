@@ -110,6 +110,10 @@ static void RegisterPortFeatures() {
                              satrecomp::kFeatureFirstPage});
     // (the Display page: how the picture is fitted to the window, video/gpu.h SetFit; the first choice of each
     // is how the port always drew it)
+
+    game.features.push_back({"hd_texture_pack", "Display", "HD Texture Pack",
+                             "Use replacement textures from the local ZIP selected in the launcher. Requires high resolution."});
+
     game.features.push_back({"display_scaling", "Display", "Scaling",
                              "Sharp: as large as fits. Whole pixels: as tall as a whole number of the Saturn's lines fits, "
                              "a border round it. Smooth: with high resolution off, the Saturn's picture softened up to the "
@@ -357,6 +361,7 @@ bool Port::Init() {
         }
         if (gpu) {
             gpu->SetScale(opt.internalScale);
+        gpu->SetHdTexturePackPath(opt.texturePackPath);
             gpu->SetOutputSize(opt.outputWidth ? opt.outputWidth : 704, opt.outputHeight);
             videoAdapter->SetMode(Mode::Gpu, onFrame);
             // SATRECOMP_GPU_CHECK=1 (with --internal-scale 1): the GPU's VDP1 framebuffer against the reference's
@@ -367,6 +372,7 @@ bool Port::Init() {
             // SATRECOMP_FLOOR=image: the rotation screen at the original resolution, drawn on the CPU
             videoRenderer->SetGpuFloor(!(getenv("SATRECOMP_FLOOR") && std::string(getenv("SATRECOMP_FLOOR")) == "image"));
             videoRenderer->SetGpuFrameCallback([this, gpuCheck](const satrecomp::video::Frame &frame) {
+                gpu->SetHdTexturePack(satrecomp::FeatureOn("hd_texture_pack"));
                 gpu->Draw(frame);
                 if (gpuCheck) {
                     std::vector<uint16_t> words;
@@ -575,6 +581,7 @@ bool Port::Init() {
     }
     if (gpu) {
         gpu->SetScale(opt.internalScale);
+        gpu->SetHdTexturePackPath(opt.texturePackPath);
         ApplyWidescreen(opt.aspect > 1.34f);
         {
             std::vector<satrecomp::video::Renderer::WideSplit> splits;
@@ -583,6 +590,7 @@ bool Port::Init() {
             }
             videoRenderer->SetWideSplits(std::move(splits));
         }
+        videoRenderer->SetWideLetterboxLayer(satrecomp::TheGame().wideLetterboxLayer);
         videoRenderer->SetMode(Mode::Gpu, onFrame);
         videoRenderer->SetBothFields(getenv("SATRECOMP_INTERLACE") == nullptr);
         videoRenderer->SetGpuFloor(!(getenv("SATRECOMP_FLOOR") && std::string(getenv("SATRECOMP_FLOOR")) == "image"));
@@ -590,6 +598,7 @@ bool Port::Init() {
         // without it): for timing the renderer as a window has it, where nothing waits for the GPU each frame
         static const bool noRead = getenv("SATRECOMP_GPU_NO_READ") != nullptr;
         videoRenderer->SetGpuFrameCallback([this](const satrecomp::video::Frame &frame) {
+            gpu->SetHdTexturePack(satrecomp::FeatureOn("hd_texture_pack"));
             gpu->Draw(frame);
             if (opt.headless && !noRead) {
                 // (no window: the picture is read back, for --shot-every and the state hash)
@@ -607,7 +616,7 @@ bool Port::Init() {
         videoRenderer->SetMode(Mode::Software, onFrame);
         // (no widescreen in software: its row would do nothing)
         auto &features = satrecomp::TheGame().features;
-        features.erase(std::remove_if(features.begin(), features.end(), [](const satrecomp::Feature &f) { return !strcmp(f.name, "widescreen"); }),
+        features.erase(std::remove_if(features.begin(), features.end(), [](const satrecomp::Feature &f) { return !strcmp(f.name, "widescreen") || !strcmp(f.name, "hd_texture_pack"); }),
                        features.end());
     }
 
@@ -1262,6 +1271,7 @@ static void Usage(const char *argv0) {
             "  --dump-decode PATH     write the SH-2 opcode decode table (used by tools/recomp.py) and exit\n"
             "  --record-blocks PATH   add every newly reached code block to this block database\n"
             "  --features A,B         enable optional features (--list-features lists them; -NAME: off)\n"
+            "  --texture-pack PATH    optional ZIP containing locally generated HD textures\n"
             "  --settings PATH        settings.ini with the player's feature choices\n"
             "  --fullscreen --scale N --mute --unthrottled\n"
             "  --shader FILE          draw through that RetroArch shader preset (.slangp), whatever the Display page says\n"
@@ -1318,6 +1328,8 @@ int main(int argc, char **argv) {
             o.stateSave = next();
         } else if (a == "--state-load") {
             o.stateLoad = next();
+        } else if (a == "--texture-pack") {
+            o.texturePackPath = next();
         } else if (a == "--settings") {
             o.settingsPath = next();
         } else if (a == "--dump-decode") {

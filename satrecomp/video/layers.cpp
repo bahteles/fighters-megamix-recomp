@@ -784,7 +784,7 @@ bool Renderer::FloorLine(float out[8]) {
     const Rotation &rot = m_rot[0];
     bool plain = setA && rot.straight && !regs2.bgEnabled[5] && !bg.bitmap && !bg.mosaicEnable && !bg.lineColorScreenEnable &&
                  none(bg.windowSet) && (bg.colorFormat == ColorFormat::Palette16 || bg.colorFormat == ColorFormat::Palette256) &&
-                 bg.priorityMode != PriorityMode::PerDot && params.screenOverProcess != ScreenOverProcess::RepeatChar;
+                 bg.priorityMode != PriorityMode::PerDot;
     for (uint32 bank = 0; bank < 4; bank++) {
         plain = plain && !bg.charPatDelay[bank] && bg.vramDataOffset[bank] == 0;
     }
@@ -800,6 +800,10 @@ bool Renderer::FloorLine(float out[8]) {
     out[2] = static_cast<float>(rot.to[0] + stepX);
     out[3] = static_cast<float>(rot.to[1] + stepY);
     out[4] = params.coeffTableEnable && rot.transparent[RotationWideDots()] ? 0.0f : 1.0f;
+    if (params.screenOverProcess == ScreenOverProcess::RepeatChar) {
+        // Keep the original layer and expose coordinates only for replacement maps.
+        out[4] = out[4] == 0.0f ? 2.0f : 3.0f;
+    }
     out[5] = out[6] = out[7] = 0;
     return true;
 }

@@ -664,7 +664,7 @@ void Renderer::GpuRow(uint32 row, uint32 y, bool otherField) {
         }
         // (debugging aid, SATRECOMP_HIDE_LAYERS=mask: bit 2 NBG0 .. bit 5 NBG3 not shown)
         static const uint32 hidden = getenv("SATRECOMP_HIDE_LAYERS") ? static_cast<uint32>(strtoul(getenv("SATRECOMP_HIDE_LAYERS"), nullptr, 0)) : 0;
-        if (!state2.layerEnabled[layer] || (layer == 2 && rbg1) || (layer == 1 && m_floorLines[(y & 511) * 8 + 4] != 2) || ((hidden >> layer) & 1)) {
+        if (!state2.layerEnabled[layer] || (layer == 2 && rbg1) || (layer == 1 && m_floorLines[(y & 511) * 8 + 4] < 2) || ((hidden >> layer) & 1)) {
             std::fill_n(line, width, 0);
             continue;
         }
@@ -711,6 +711,35 @@ void Renderer::SplitLine(uint32 layer, uint32 row, uint32 *line) const {
     }
 }
 
+// Expand the two opaque black strips of a letterboxed scene. Credits and other pixels in the
+// centre of the layer keep their original positions.
+void Renderer::ExtendLetterbox() {
+    auto &image = m_layerImage[m_wideLetterboxLayer + 1]; // RBG0 precedes the normal backgrounds
+    const uint32 extra = WideDots(), width = LineWidth();
+    auto isBar = [&](uint32 row) {
+        const auto *first = image.data() + static_cast<size_t>(row) * width + extra;
+        const uint32 pixel = *first;
+        return (pixel >> 24) != 0 && (pixel & 0xFFFFFF) == 0 &&
+               std::all_of(first, first + m_width, [pixel](uint32 value) { return value == pixel; });
+    };
+    uint32 top = 0, bottom = m_height;
+    while (top < m_height / 2 && isBar(top)) {
+        ++top;
+    }
+    while (bottom > m_height / 2 && isBar(bottom - 1)) {
+        --bottom;
+    }
+    if (top == 0 || bottom == m_height || top >= bottom) {
+        return;
+    }
+    for (uint32 row = 0; row < m_height; ++row) {
+        if (row < top || row >= bottom) {
+            auto *line = image.data() + static_cast<size_t>(row) * width;
+            std::fill_n(line, width, line[extra]);
+        }
+    }
+}
+
 void Renderer::GpuEndFrame() {
     const Vdp1Regs &regs1 = m_regs1;
     const Vdp2Regs &regs2 = m_regs2;
@@ -727,6 +756,9 @@ void Renderer::GpuEndFrame() {
         // (only a scene with the 3D floor is shown beyond the hardware's picture)
         frame.blankSides = m_regs2.layerEnabled[1] ? 0 : WideDots();
         frame.height = m_height;
+        if (m_wideLetterboxLayer >= 0 && WideDots() && frame.blankSides == 0) {
+            ExtendLetterbox();
+        }
         frame.interlaced = interlaced;
         for (uint32 i = 0; i < 5; i++) {
             frame.layers[i] = m_layerImage[i].data();

@@ -6,6 +6,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <fstream>
+#include <sstream>
+#include <zlib.h>
 
 namespace satrecomp::video {
 
@@ -25,13 +29,74 @@ namespace {
         int32_t sprite[4];
         int32_t priLow[4], priHigh[4];
         int32_t misc[4];
+        int32_t hdText[8][4];
+        int32_t hdTextMeta[2][4];
         float colorOffset[7][4];
         int32_t floor[4];       // lines of a field, dots a line, flags, priority
         int32_t floorMore[4];   // colour offset, more character number bits, more palette bits, access
         uint32_t floorPlanes[16];
+        uint32_t hdAirport[4];
+        int32_t menuBackground[4];
     };
 
     constexpr uint32_t kVramWidth = 1024, kVramHeight = 512;
+    constexpr uint32_t kVramBytes = kVramWidth * kVramHeight;
+    constexpr uint32_t kHdScale = 4, kHdAtlasWidth = 16384, kHdMaxRows = 16384;
+    constexpr uint32_t kWinnerWidth = 187, kWinnerHeight = 32, kWinnerTop = 360;
+    constexpr uint32_t kWinnerLeftOfCenter = 93;
+    // This pack format uses ordinary ZIP members without streaming data descriptors.
+    // Read only the known members, directly from the archive.
+    bool ReadTextureZip(const std::filesystem::path &path, std::string (&members)[4]) {
+        std::ifstream file(path, std::ios::binary);
+        constexpr size_t maxBytes = 256u * 1024 * 1024;
+        constexpr const char *names[] = {"fighters.fmmtex", "winner.fmmhud", "fight-text.fmmhud", "airport-floor.fmmtex"};
+        size_t total = 0;
+        while (file) {
+            uint8_t header[30];
+            if (!file.read(reinterpret_cast<char *>(header), 4)) { return false; }
+            if (std::memcmp(header, "PK\x01\x02", 4) == 0) { return !members[0].empty(); }
+            if (std::memcmp(header, "PK\x03\x04", 4) != 0 ||
+                !file.read(reinterpret_cast<char *>(header + 4), 26)) { return false; }
+            auto word = [&](int i) { return static_cast<uint32_t>(header[i] | header[i + 1] << 8); };
+            auto longword = [&](int i) { return word(i) | word(i + 2) << 16; };
+            const uint32_t flags = word(6), method = word(8), crc = longword(14);
+            const uint32_t compressed = longword(18), bytes = longword(22);
+            if ((flags & ~0x800u) || compressed > maxBytes || bytes > maxBytes ||
+                word(26) == 0 || word(26) > 256) { return false; }
+            std::string name(word(26), '\0');
+            if (!file.read(name.data(), name.size()) || !file.seekg(word(28), std::ios::cur)) { return false; }
+            int index = 0;
+            while (index < 4 && name != names[index]) { ++index; }
+            if (index == 4) {
+                file.seekg(compressed, std::ios::cur);
+                continue;
+            }
+            if (!members[index].empty() || bytes == 0 || total + bytes > maxBytes) { return false; }
+            auto &out = members[index];
+            if (method == 0 && compressed == bytes) {
+                out.resize(bytes);
+                if (!file.read(out.data(), bytes)) { return false; }
+            } else if (method == 8) {
+                std::string input(compressed, '\0');
+                if (!file.read(input.data(), compressed)) { return false; }
+                out.resize(bytes);
+                z_stream stream{};
+                stream.next_in = reinterpret_cast<Bytef *>(input.data());
+                stream.avail_in = compressed;
+                stream.next_out = reinterpret_cast<Bytef *>(out.data());
+                stream.avail_out = bytes;
+                if (inflateInit2(&stream, -MAX_WBITS) != Z_OK) { return false; }
+                const int result = inflate(&stream, Z_FINISH);
+                inflateEnd(&stream);
+                if (result != Z_STREAM_END || stream.total_out != bytes || stream.total_in != compressed) { return false; }
+            } else {
+                return false;
+            }
+            if (crc32(0, reinterpret_cast<const Bytef *>(out.data()), bytes) != crc) { return false; }
+            total += bytes;
+        }
+        return false;
+    }
 } // namespace
 
 SDL_GPUShader *Gpu::Shader(SDL_GPUShaderStage stage, const unsigned char *spirv, size_t spirvSize, const char *msl,
@@ -87,9 +152,9 @@ void Gpu::Release(SDL_GPUTexture *&texture) {
 bool Gpu::Init(SDL_GPUDevice *device) {
     m_device = device;
     SDL_GPUShader *quadVertex = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_VERTEX, quad_vert, 0, 1);
-    SDL_GPUShader *quadFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, quad_frag, 1, 1);
+    SDL_GPUShader *quadFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, quad_frag, 2, 1);
     SDL_GPUShader *screenVertex = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_VERTEX, screen_vert, 0, 0);
-    SDL_GPUShader *composeFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, compose_frag, 11, 1);
+    SDL_GPUShader *composeFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, compose_frag, 12, 1);
     SDL_GPUShader *hudFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, hud_frag, 1, 0);
     if (!quadVertex || !quadFragment || !screenVertex || !composeFragment) {
         return false;
@@ -202,6 +267,7 @@ void Gpu::Shutdown() {
         Release(texture);
     }
     Release(m_vram);
+    Release(m_hdAtlas);
     Release(m_colors);
     Release(m_back);
     Release(m_window);
@@ -338,6 +404,174 @@ bool Gpu::Prepare(const Frame &frame) {
     return true;
 }
 
+void Gpu::SetHdTexturePack(bool enabled) {
+    if (enabled && !m_hdAttempted) {
+        m_hdAttempted = true;
+        if (!LoadHdTexturePack()) {
+            SDL_Log("HD Texture Pack: no valid local ZIP selected");
+        }
+    }
+    m_hdEnabled = enabled && !m_hdTextures.empty();
+}
+
+bool Gpu::LoadHdTexturePack() {
+    if (m_hdPackPath.empty()) {
+        return false;
+    }
+    const std::filesystem::path path(std::u8string(reinterpret_cast<const char8_t *>(m_hdPackPath.c_str())));
+    std::string members[4];
+    if (!ReadTextureZip(path, members)) {
+        return false;
+    }
+    std::istringstream file(std::move(members[0]), std::ios::binary);
+    char magic[8];
+    if (!file.read(magic, sizeof(magic)) || std::memcmp(magic, "FMMHD001", sizeof(magic))) {
+        return false;
+    }
+    // Each record is little-endian width and height, then original and 4x RGB555 images in VDP1 byte order.
+    std::vector<HdTexture> textures;
+    std::vector<uint8_t> pixels;
+    while (file.peek() != std::char_traits<char>::eof()) {
+        uint8_t size[4];
+        if (!file.read(reinterpret_cast<char *>(size), sizeof(size))) {
+            return false;
+        }
+        const auto width = static_cast<uint16_t>(size[0] | size[1] << 8);
+        const auto height = static_cast<uint16_t>(size[2] | size[3] << 8);
+        const uint32_t nativeBytes = 2u * width * height;
+        const size_t offset = pixels.size();
+        if (width == 0 || width > 504 || height == 0 || height > 255 ||
+            offset + nativeBytes * kHdScale * kHdScale > kHdAtlasWidth * kHdMaxRows) {
+            return false;
+        }
+        HdTexture texture{width, height, static_cast<uint32_t>(offset), std::vector<uint8_t>(nativeBytes)};
+        pixels.resize(offset + nativeBytes * kHdScale * kHdScale);
+        if (!file.read(reinterpret_cast<char *>(texture.original.data()), nativeBytes) ||
+            !file.read(reinterpret_cast<char *>(pixels.data() + offset), nativeBytes * kHdScale * kHdScale)) {
+            return false;
+        }
+        textures.push_back(std::move(texture));
+    }
+    std::vector<HdText> text;
+    const auto readText = [&](std::istream &input, HdText entry) {
+        const size_t count = static_cast<size_t>(entry.width) * entry.height;
+        const size_t hdBytes = count * 4 * entry.scale * entry.scale;
+        if (!count || (entry.layer & ~0x80u) >= 4 || (entry.scale != 4 && entry.scale != 8) || pixels.size() + hdBytes > kHdAtlasWidth * kHdMaxRows) {
+            return false;
+        }
+        entry.offset = static_cast<uint32_t>(pixels.size());
+        entry.original.resize(count);
+        pixels.resize(entry.offset + hdBytes);
+        if (!input.read(reinterpret_cast<char *>(entry.original.data()), count * 4) ||
+            !input.read(reinterpret_cast<char *>(pixels.data() + entry.offset), hdBytes)) {
+            pixels.resize(entry.offset);
+            return false;
+        }
+        text.push_back(std::move(entry));
+        return true;
+    };
+    std::istringstream winner(std::move(members[1]), std::ios::binary);
+    if (winner.read(magic, sizeof(magic)) && std::memcmp(magic, "FMMWIN01", sizeof(magic)) == 0) {
+        readText(winner, {-static_cast<int32_t>(kWinnerLeftOfCenter), kWinnerTop, kWinnerWidth, kWinnerHeight, 2, 4, 0, {}});
+    }
+    std::istringstream messages(std::move(members[2]), std::ios::binary);
+    if (messages.read(magic, sizeof(magic)) &&
+        (std::memcmp(magic, "FMMTXT01", sizeof(magic)) == 0 || std::memcmp(magic, "FMMTXT02", sizeof(magic)) == 0)) {
+        const bool hasScale = magic[7] == '2';
+        uint8_t header[10];
+        while (messages.read(reinterpret_cast<char *>(header), hasScale ? 10 : 9)) {
+            const auto word = [&](int i) { return static_cast<uint32_t>(header[i] | header[i + 1] << 8); };
+            if (!readText(messages, {static_cast<int16_t>(word(0)), word(2), word(4), word(6), header[8], hasScale ? static_cast<uint32_t>(header[9]) : 4u, 0, {}})) {
+                break;
+            }
+        }
+    }
+    const auto &airport = members[3];
+    constexpr size_t airportBytes = (2048u * 2048 + 1024u * 1024) * 3;
+    if (airport.size() == 20 + airportBytes && airport.compare(0, 8, "FMMAIR02") == 0 &&
+        pixels.size() + airportBytes <= kHdAtlasWidth * kHdMaxRows) {
+        for (uint32_t i = 0; i < 12; ++i) {
+            m_hdAirportCrc[i / 4] |= static_cast<uint32_t>(static_cast<uint8_t>(airport[8 + i])) << (8 * (i % 4));
+        }
+        m_hdAirportOffset = static_cast<uint32_t>(pixels.size());
+        pixels.insert(pixels.end(), airport.begin() + 20, airport.end());
+    }
+    pixels.resize((pixels.size() + kHdAtlasWidth - 1) / kHdAtlasWidth * kHdAtlasWidth);
+    if (pixels.empty()) {
+        return false;
+    }
+    const uint32_t rows = static_cast<uint32_t>(pixels.size() / kHdAtlasWidth);
+    m_hdAtlas = Texture(SDL_GPU_TEXTUREFORMAT_R8_UINT, kHdAtlasWidth, rows, false);
+    if (!m_hdAtlas) {
+        return false;
+    }
+    SDL_GPUTransferBufferCreateInfo info{};
+    info.usage = SDL_GPU_TRANSFERBUFFERUSAGE_UPLOAD;
+    info.size = static_cast<uint32_t>(pixels.size());
+    SDL_GPUTransferBuffer *transfer = SDL_CreateGPUTransferBuffer(m_device, &info);
+    if (!transfer) {
+        Release(m_hdAtlas);
+        return false;
+    }
+    bool uploaded = false;
+    if (void *mapped = SDL_MapGPUTransferBuffer(m_device, transfer, false)) {
+        std::memcpy(mapped, pixels.data(), pixels.size());
+        SDL_UnmapGPUTransferBuffer(m_device, transfer);
+        if (SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(m_device)) {
+            SDL_GPUTextureTransferInfo source{transfer, 0, kHdAtlasWidth, rows};
+            SDL_GPUTextureRegion region{};
+            region.texture = m_hdAtlas;
+            region.w = kHdAtlasWidth;
+            region.h = rows;
+            region.d = 1;
+            SDL_GPUCopyPass *pass = SDL_BeginGPUCopyPass(cmd);
+            SDL_UploadToGPUTexture(pass, &source, &region, false);
+            SDL_EndGPUCopyPass(pass);
+            uploaded = SDL_SubmitGPUCommandBuffer(cmd);
+        }
+    }
+    SDL_ReleaseGPUTransferBuffer(m_device, transfer);
+    if (!uploaded) {
+        Release(m_hdAtlas);
+        return false;
+    }
+    m_hdText = std::move(text);
+    const auto sizeKey = [](const HdTexture &texture) {
+        return (static_cast<uint32_t>(texture.width) << 16) | texture.height;
+    };
+    std::sort(textures.begin(), textures.end(), [&](const HdTexture &a, const HdTexture &b) {
+        return sizeKey(a) < sizeKey(b);
+    });
+    m_hdTextures = std::move(textures);
+    return true;
+}
+
+bool Gpu::MatchesHdText(const Frame &frame, const HdText &text) const {
+    const int32_t left = static_cast<int32_t>(frame.width / 2) + text.leftFromCenter;
+    if (left < 0 || left + text.width > frame.width || text.top + text.height > frame.height) {
+        return false;
+    }
+    for (uint32_t y = 0; y < text.height; ++y) {
+        const uint32_t *row = frame.layers[(text.layer & 3) + 1] + (text.top + y) * frame.width + left;
+        for (uint32_t x = 0; x < text.width; ++x) {
+            const uint32_t value = row[x] >> 24 ? row[x] : 0;
+            const uint32_t original = text.original[y * text.width + x];
+            if (value == original) {
+                continue;
+            }
+            const auto warm = [](uint32_t rgba) {
+                const int red = rgba & 255, blue = (rgba >> 16) & 255;
+                return red > 100 && red - blue > 45;
+            };
+            if (!(text.layer & 0x80) || (value >> 24) != (original >> 24) ||
+                warm(value) != warm(original)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 void Gpu::Draw(const Frame &frame) {
     if (!m_device || !frame.width || !frame.height || !Prepare(frame)) {
         return;
@@ -356,7 +590,7 @@ void Gpu::Draw(const Frame &frame) {
     }
     const uint32_t layerBytes = frame.width * frame.height * 4;
     const uint32_t vertexBytes = static_cast<uint32_t>(frame.quads.size() * 6 * sizeof(Vertex));
-    const uint32_t vramBytes = kVramWidth * kVramHeight;
+    const uint32_t vramBytes = kVramBytes;
     const uint32_t backRows = std::min<uint32_t>(frame.height, 512);
 
     // Everything to upload goes through one transfer buffer: [vertices][VRAM snapshots][layers][window][back][colours]
@@ -407,6 +641,7 @@ void Gpu::Draw(const Frame &frame) {
 
     // Each quad as the rectangle around it (two triangles), no further than its clipping rectangle
     auto *vertex = reinterpret_cast<Vertex *>(bytes + vertexAt);
+    size_t eventIndex = 0;
     for (const Quad &quad : frame.quads) {
         float x0 = quad.corner[0][0], x1 = x0, y0 = quad.corner[0][1], y1 = y0;
         for (int i = 1; i < 4; i++) {
@@ -428,6 +663,31 @@ void Gpu::Draw(const Frame &frame) {
         v.tex[1] = quad.width | (static_cast<uint32_t>(quad.height) << 10) | (static_cast<uint32_t>(quad.lines) << 18);
         v.tex[2] = quad.mode | (static_cast<uint32_t>(quad.flags) << 16);
         v.tex[3] = quad.color;
+        if (m_hdEnabled && (quad.flags & kQuadTextureUpscale) && ((quad.mode >> 3) & 7) == 5) {
+            const auto quadIndex = static_cast<size_t>(&quad - frame.quads.data());
+            while (eventIndex < frame.events.size() &&
+                   (frame.events[eventIndex].kind != Vdp1Event::Kind::Draw ||
+                    quadIndex >= frame.events[eventIndex].firstQuad + frame.events[eventIndex].quadCount)) {
+                ++eventIndex;
+            }
+            if (eventIndex < frame.events.size() && quadIndex >= frame.events[eventIndex].firstQuad) {
+                const auto &vram = frame.vram[frame.events[eventIndex].vram];
+                const uint32_t key = (static_cast<uint32_t>(quad.width) << 16) | quad.height;
+                auto match = std::lower_bound(m_hdTextures.begin(), m_hdTextures.end(), key,
+                    [](const HdTexture &texture, uint32_t value) {
+                        return ((static_cast<uint32_t>(texture.width) << 16) | texture.height) < value;
+                    });
+                for (; match != m_hdTextures.end() && match->width == quad.width && match->height == quad.height; ++match) {
+                    const auto &texture = *match;
+                    if (quad.texture + texture.original.size() <= vram.size() &&
+                        std::memcmp(vram.data() + quad.texture, texture.original.data(), texture.original.size()) == 0) {
+                        v.tex[0] = texture.offset;
+                        v.tex[2] |= static_cast<uint32_t>(kQuadHdTexture) << 16;
+                        break;
+                    }
+                }
+            }
+        }
         for (int i = 0; i < 4; i++) {
             v.gouraud[i] = quad.gouraud[i];
         }
@@ -487,7 +747,7 @@ void Gpu::Draw(const Frame &frame) {
 
     // The VDP1's work, in the order it happened
     const float vertexUniforms[4] = {static_cast<float>(m_spriteWidth), static_cast<float>(m_spriteHeight), 0, 0};
-    const float fragmentUniforms[4] = {static_cast<float>(m_scale), 0, 0, 0};
+    const float fragmentUniforms[4] = {static_cast<float>(m_scale), m_textureUpscale ? 1.0f : 0.0f, 0, 0};
     for (const Vdp1Event &event : frame.events) {
         if (event.kind == Vdp1Event::Kind::Swap) {
             std::swap(m_sprites[0], m_sprites[1]);
@@ -510,8 +770,10 @@ void Gpu::Draw(const Frame &frame) {
         SDL_BindGPUGraphicsPipeline(pass, m_quadPipeline);
         const SDL_GPUBufferBinding binding{m_vertices, 0};
         SDL_BindGPUVertexBuffers(pass, 0, &binding, 1);
-        const SDL_GPUTextureSamplerBinding sampler{m_vram, m_nearest};
-        SDL_BindGPUFragmentSamplers(pass, 0, &sampler, 1);
+        const SDL_GPUTextureSamplerBinding samplers[] = {
+            {m_vram, m_nearest}, {m_hdEnabled ? m_hdAtlas : m_vram, m_nearest},
+        };
+        SDL_BindGPUFragmentSamplers(pass, 0, samplers, 2);
         SDL_PushGPUVertexUniformData(cmd, 0, vertexUniforms, sizeof(vertexUniforms));
         SDL_PushGPUFragmentUniformData(cmd, 0, fragmentUniforms, sizeof(fragmentUniforms));
         SDL_DrawGPUPrimitives(pass, event.quadCount * 6, 1, event.firstQuad * 6, 0);
@@ -554,10 +816,69 @@ void Gpu::Draw(const Frame &frame) {
         uniforms.floorMore[2] = static_cast<int32_t>(floor.morePalette);
         uniforms.floorMore[3] = floor.access;
         memcpy(uniforms.floorPlanes, floor.planes, sizeof(uniforms.floorPlanes));
+        if (m_hdEnabled && m_hdAirportOffset && floor.planes[5] == 0x20000 && floor.planes[6] == 0x22000 &&
+            floor.planes[9] == 0x24000 && floor.planes[10] == 0x26000 &&
+            crc32(0, reinterpret_cast<const Bytef *>(floor.vram) + 0x20000, 0xa000) == m_hdAirportCrc[0] &&
+            crc32(0, reinterpret_cast<const Bytef *>(floor.vram) + 0x60000, 124608) == m_hdAirportCrc[1] &&
+            crc32(0, reinterpret_cast<const Bytef *>(frame.colors + 768), 256 * 4) == m_hdAirportCrc[2]) {
+            uniforms.hdAirport[0] = m_hdAirportOffset;
+        }
         // (several samples a pixel when the VDP1's target has more pixels than the output shows)
         const uint32_t samples = std::clamp<uint32_t>((m_spriteHeight * m_scale + m_outputHeight / 2) / m_outputHeight, 1, 4);
         uniforms.misc[1] = static_cast<int32_t>(samples);
+        if (m_uiContours) {
+            // The normal backgrounds carry the interface. In 3D scenes, NBG0
+            // and NBG1 can carry scenery, so only process the HUD layers there.
+            bool arena = false;
+            for (uint32_t row = 0; row < floor.lineCount && !arena; ++row) {
+                arena = floor.lines[row * 8 + 4] != 0.0f;
+            }
+            uniforms.misc[0] |= (arena ? 0xC : 0xF) << 7;
+        }
         uniforms.misc[2] = static_cast<int32_t>(frame.blankSides);
+        if (frame.blankSides && frame.layers[1] && frame.width > 2 * frame.blankSides + 64 && frame.height > 8) {
+            const uint32_t left = frame.blankSides;
+            for (uint32_t menuLayer = 0; menuLayer < 4; ++menuLayer) {
+                const auto background = [&](uint32_t x, uint32_t y) {
+                    return frame.layers[menuLayer + 1][static_cast<size_t>(y) * frame.width + x];
+                };
+                const uint32_t row = frame.height / 2;
+                const uint32_t a = background(left + 4, row), b = background(left + 20, row);
+                const auto blue = [](uint32_t color) {
+                    return (color & 0xFFFFu) == 0 && (color & 0xFF0000u) != 0 && (color >> 24) != 0;
+                };
+                const auto gray = [](uint32_t color) {
+                    const uint32_t r = color & 255u;
+                    return r > 0 && r == ((color >> 8) & 255u) && r == ((color >> 16) & 255u) && (color >> 24) != 0;
+                };
+                if (blue(a) && blue(b) && a != b &&
+                    a == background(left + 36, row) && b == background(left + 52, row)) {
+                    uniforms.menuBackground[0] = 2;
+                    uniforms.menuBackground[1] = menuLayer;
+                    break;
+                } else if (menuLayer == 0 && gray(a) && a == b && gray(background(left + 4, 0)) &&
+                           gray(background(left + 4, frame.height - 1))) {
+                    uniforms.menuBackground[0] = 1;
+                    break;
+                }
+            }
+        }
+
+        if (m_hdEnabled) {
+            for (const auto &text : m_hdText) {
+                if (!MatchesHdText(frame, text)) {
+                    continue;
+                }
+                const int i = uniforms.misc[3]++;
+                uniforms.hdTextMeta[i / 4][i % 4] = static_cast<int32_t>((text.offset << 3) |
+                    (text.scale == 8 ? 4u : 0u) | (text.layer & 3));
+                uniforms.hdText[i][0] = static_cast<int32_t>(frame.width / 2) + text.leftFromCenter;
+                uniforms.hdText[i][1] = static_cast<int32_t>(text.top);
+                uniforms.hdText[i][2] = static_cast<int32_t>(text.width);
+                uniforms.hdText[i][3] = static_cast<int32_t>(text.height);
+                if (uniforms.misc[3] == 8) { break; }
+            }
+        }
 
         SDL_GPUColorTargetInfo target{};
         target.texture = m_output;
@@ -565,12 +886,13 @@ void Gpu::Draw(const Frame &frame) {
         target.store_op = SDL_GPU_STOREOP_STORE;
         SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &target, 1, nullptr);
         SDL_BindGPUGraphicsPipeline(pass, m_composePipeline);
-        const SDL_GPUTextureSamplerBinding samplers[11] = {
+        const SDL_GPUTextureSamplerBinding samplers[12] = {
             {m_sprites[0], m_nearest}, {m_colors, m_nearest},    {m_layers[0], m_nearest},  {m_layers[1], m_nearest},
             {m_layers[2], m_nearest},  {m_layers[3], m_nearest}, {m_layers[4], m_nearest},  {m_window, m_nearest},
             {m_back, m_nearest},       {m_vram2, m_nearest},     {m_floorLines, m_nearest},
+            {m_hdEnabled ? m_hdAtlas : m_vram, m_nearest},
         };
-        SDL_BindGPUFragmentSamplers(pass, 0, samplers, 11);
+        SDL_BindGPUFragmentSamplers(pass, 0, samplers, 12);
         SDL_PushGPUFragmentUniformData(cmd, 0, &uniforms, sizeof(uniforms));
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
         SDL_EndGPURenderPass(pass);

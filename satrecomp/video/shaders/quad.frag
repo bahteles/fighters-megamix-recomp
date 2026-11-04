@@ -11,9 +11,10 @@ layout(location = 4) flat in uvec4 v_tex;
 layout(location = 5) flat in uvec4 v_gouraud;
 
 layout(set = 2, binding = 0) uniform usampler2D vram; // VDP1 video memory, 1024 bytes a row
+layout(set = 2, binding = 1) uniform usampler2D hdAtlas;
 
 layout(set = 3, binding = 0, std140) uniform FragmentUniforms {
-    vec4 scale; // x: target pixels per VDP1 pixel
+    vec4 scale; // x: target pixels per VDP1 pixel; y: texture upscale enabled
 };
 
 layout(location = 0) out uint out_word;
@@ -25,6 +26,10 @@ float cross2(vec2 a, vec2 b) {
 uint fetch8(uint address) {
     return texelFetch(vram, ivec2(int(address & 1023u), int((address >> 10) & 511u)), 0).r;
 }
+uint fetch_hd_byte(uint address) {
+    return texelFetch(hdAtlas, ivec2(int(address & 16383u), int(address >> 14)), 0).r;
+}
+
 uint fetch16(uint address) {
     return (fetch8(address) << 8) | fetch8(address + 1u);
 }
@@ -70,18 +75,86 @@ bool locate(vec2 p, vec2 a, vec2 b, vec2 c, vec2 d, out vec2 uv) {
 
 // Which of `count` texels shows at `along` (0..1) of `length` pixels. Shrinking, each pixel takes the texel
 // under its centre; stretching, the first pixel shows the first texel and the last the last.
-uint step_texel(float along, float length, uint count) {
+float texel_position(float along, float length, uint count) {
     float n = float(count);
     float texel;
     if (length <= n - 1.0) {
-        texel = floor(along * n);
+        texel = along * n;
     } else if (length <= 1.0) {
         texel = 0.0;
     } else {
         float pixel = along * length - 0.5;
-        texel = floor((pixel * (n - 1.0) - 0.5) / (length - 1.0) + 0.5);
+        texel = (pixel * (n - 1.0) - 0.5) / (length - 1.0) + 0.5;
     }
-    return uint(clamp(texel, 0.0, n - 1.0));
+    return clamp(texel, 0.0, n - 0.0001);
+}
+
+const uint kTransparent = 0x10000u;
+
+uint read_texel(uint tx, uint ty, uint width, uint mode) {
+    uint color;
+    uint index = tx + ty * max(width, 1u);
+    uint address = v_tex.x;
+    bool transparent, endCode;
+    switch ((mode >> 3) & 7u) {
+    case 0u: // 16 colours, of the colour bank
+        color = (fetch8(address + (index >> 1)) >> ((~tx & 1u) * 4u)) & 0xFu;
+        endCode = color == 0xFu;
+        transparent = color == 0u;
+        color |= v_tex.w & 0xFFF0u;
+        break;
+    case 1u: // 16 colours, through a table in video memory
+        color = (fetch8(address + (index >> 1)) >> ((~tx & 1u) * 4u)) & 0xFu;
+        endCode = color == 0xFu;
+        transparent = color == 0u;
+        color = fetch16(color * 2u + (v_tex.w << 3));
+        break;
+    case 2u:
+        color = fetch8(address + index);
+        endCode = color == 0xFFu;
+        transparent = color == 0u;
+        color = (color & 0x3Fu) | (v_tex.w & 0xFFC0u);
+        break;
+    case 3u:
+        color = fetch8(address + index);
+        endCode = color == 0xFFu;
+        transparent = color == 0u;
+        color = (color & 0x7Fu) | (v_tex.w & 0xFF80u);
+        break;
+    case 4u:
+        color = fetch8(address + index);
+        endCode = color == 0xFFu;
+        transparent = color == 0u;
+        color |= v_tex.w & 0xFF00u;
+        break;
+    default: // RGB
+        color = fetch16(address + index * 2u);
+        endCode = color == 0x7FFFu;
+        transparent = (color & 0x8000u) == 0u;
+        break;
+    }
+    if ((endCode && (mode & 0x80u) == 0u) || (transparent && (mode & 0x40u) == 0u)) {
+        return kTransparent;
+    }
+    return color;
+}
+
+// Scale2x selects a neighbour in a texel's quadrant when two matching edges meet.
+// Keep transparent pixels out of the filter so texture edges and holes stay intact.
+uint scale_texel(uint center, ivec2 at, ivec2 size, ivec2 direction, uint mode) {
+    ivec2 last = size - 1;
+    ivec2 x = ivec2(direction.x, 0), y = ivec2(0, direction.y);
+    uvec2 horizontal = uvec2(clamp(at + x, ivec2(0), last));
+    uvec2 vertical = uvec2(clamp(at + y, ivec2(0), last));
+    uint h = read_texel(horizontal.x, horizontal.y, uint(size.x), mode);
+    uint v = read_texel(vertical.x, vertical.y, uint(size.x), mode);
+    if (h == center || h == kTransparent || h != v) {
+        return center;
+    }
+    uvec2 oppositeX = uvec2(clamp(at - x, ivec2(0), last));
+    uvec2 oppositeY = uvec2(clamp(at - y, ivec2(0), last));
+    return h != read_texel(oppositeX.x, oppositeX.y, uint(size.x), mode) &&
+           v != read_texel(oppositeY.x, oppositeY.y, uint(size.x), mode) ? h : center;
 }
 
 void main() {
@@ -113,6 +186,9 @@ void main() {
     } else {
         uint width = v_tex.y & 0x3FFu, height = (v_tex.y >> 10) & 0xFFu;
         uint tx = 0u, ty = 0u;
+        bool upscale = false;
+        vec2 texelAt = vec2(0.0);
+        ivec2 stepDirection = ivec2(0);
         if (width != 0u) {
             // The hardware draws the quad as `lines` lines from its edge a-d to its edge b-c, each `across`
             // pixels long, and steps through the character's rows and columns as it goes
@@ -121,60 +197,47 @@ void main() {
             float lines = float(max(v_tex.y >> 18, 1u));
             bool halved = (mode & 0x1000u) != 0u && across < float(width); // high speed shrink: every other column
             uint columns = halved ? width / 2u : width;
-            tx = step_texel(uv.x, across, columns);
+            float texelX = texel_position(uv.x, across, columns);
+            float texelY = texel_position(uv.y, lines, max(height, 1u));
+            texelAt = vec2(halved ? texel_position(uv.x, across, width) : texelX, texelY);
+            tx = uint(texelX);
+            ty = uint(texelY);
+            upscale = scale.y != 0.0 && (flags & 32u) != 0u && !halved &&
+                      width > 1u && height > 1u &&
+                      across * scale.x >= float(width) * 2.0 &&
+                      lines * scale.x >= float(height) * 2.0;
+            stepDirection = mix(ivec2(1), ivec2(-1), lessThan(fract(vec2(texelX, texelY)), vec2(0.5)));
             if ((flags & 2u) != 0u) {
                 tx = columns - 1u - tx;
+                stepDirection.x = -stepDirection.x;
             }
             if (halved) {
                 tx = (tx << 1) | ((flags >> 4) & 1u);
             }
-            ty = step_texel(uv.y, lines, max(height, 1u));
             if ((flags & 4u) != 0u) {
                 ty = max(height, 1u) - 1u - ty;
+                stepDirection.y = -stepDirection.y;
             }
         }
-        uint index = tx + ty * max(width, 1u);
-        uint address = v_tex.x;
-        bool transparent, endCode;
-        switch ((mode >> 3) & 7u) {
-        case 0u: // 16 colours, of the colour bank
-            color = (fetch8(address + (index >> 1)) >> ((~tx & 1u) * 4u)) & 0xFu;
-            endCode = color == 0xFu;
-            transparent = color == 0u;
-            color |= v_tex.w & 0xFFF0u;
-            break;
-        case 1u: // 16 colours, through a table in video memory
-            color = (fetch8(address + (index >> 1)) >> ((~tx & 1u) * 4u)) & 0xFu;
-            endCode = color == 0xFu;
-            transparent = color == 0u;
-            color = fetch16(color * 2u + (v_tex.w << 3));
-            break;
-        case 2u:
-            color = fetch8(address + index);
-            endCode = color == 0xFFu;
-            transparent = color == 0u;
-            color = (color & 0x3Fu) | (v_tex.w & 0xFFC0u);
-            break;
-        case 3u:
-            color = fetch8(address + index);
-            endCode = color == 0xFFu;
-            transparent = color == 0u;
-            color = (color & 0x7Fu) | (v_tex.w & 0xFF80u);
-            break;
-        case 4u:
-            color = fetch8(address + index);
-            endCode = color == 0xFFu;
-            transparent = color == 0u;
-            color |= v_tex.w & 0xFF00u;
-            break;
-        default: // RGB
-            color = fetch16(address + index * 2u);
-            endCode = color == 0x7FFFu;
-            transparent = (color & 0x8000u) == 0u;
-            break;
-        }
-        if ((endCode && (mode & 0x80u) == 0u) || (transparent && (mode & 0x40u) == 0u)) {
-            discard;
+        if ((flags & 64u) != 0u) {
+            // Sample inside the original texel so its transparency mask still maps to the same quad.
+            uvec2 size = uvec2(width, height) * 4u;
+            uvec2 pixel = min(uvec2(texelAt * 4.0), size - 1u);
+            if ((flags & 2u) != 0u) { pixel.x = size.x - 1u - pixel.x; }
+            if ((flags & 4u) != 0u) { pixel.y = size.y - 1u - pixel.y; }
+            uint address = v_tex.x + (pixel.x + pixel.y * size.x) * 2u;
+            color = (fetch_hd_byte(address) << 8) | fetch_hd_byte(address + 1u);
+            if (color == 0u) {
+                discard;
+            }
+        } else {
+            color = read_texel(tx, ty, width, mode);
+            if (color == kTransparent) {
+                discard;
+            }
+            if (upscale) {
+                color = scale_texel(color, ivec2(tx, ty), ivec2(width, height), stepDirection, mode);
+            }
         }
     }
 

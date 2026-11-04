@@ -83,6 +83,7 @@ public:
     // Widescreen: parts of a scroll screen that belong at the picture's sides (a game's gauges, say). In the
     // rows given, what is left of `leftEnd` moves out to the left edge and what is at or right of `rightStart`
     // to the right edge; what is between stays in the middle. (Rows and columns of the hardware's picture.)
+    void SetWideLetterboxLayer(int layer) { m_wideLetterboxLayer = layer; }
     struct WideSplit {
         uint32 layer; // 0..3: NBG0..NBG3
         uint32 rowFrom, rowTo;
@@ -279,6 +280,8 @@ private:
         return m_width + 2 * WideDots();
     }
     std::vector<WideSplit> m_wideSplits;
+    int m_wideLetterboxLayer = -1;
+    void ExtendLetterbox();
     void SplitLine(uint32 layer, uint32 row, uint32 *line) const;
     void WidenWindow(std::vector<uint8> &line) const;
     void WidenQuad(Quad &quad) const;

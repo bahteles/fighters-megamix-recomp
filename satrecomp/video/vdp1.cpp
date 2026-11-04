@@ -131,6 +131,16 @@ void Renderer::Vdp1FinishQuad(Quad &quad, const Command &cmd, uint16 flags, cons
             quad.clip[3] = std::min<float>(quad.clip[3], ctx.userClipY1 + 1.0f);
         }
     }
+    // Double-interlace drawing coordinates address the whole picture, but the GPU target is one field.
+    if (m_regs1.dblInterlaceEnable) {
+        for (auto &corner : quad.corner) {
+            corner[1] *= 0.5f;
+        }
+        quad.clip[1] *= 0.5f;
+        quad.clip[3] *= 0.5f;
+        quad.clipOut[1] *= 0.5f;
+        quad.clipOut[3] *= 0.5f;
+    }
     const uint32 colorMode = (mode >> 3) & 7;
     quad.texture = static_cast<uint32>(cmd.words[4]) * 8;
     if (colorMode == 5) {
@@ -241,7 +251,7 @@ void Renderer::Vdp1Command(const Command &cmd) {
     }
     case 2:
     case 3: // distorted sprite: the character stretched over any four points
-        Vdp1AddQuad(cmd, c, flips, shaded ? gouraud : nullptr);
+        Vdp1AddQuad(cmd, c, flips | kQuadTextureUpscale, shaded ? gouraud : nullptr);
         break;
     case 4: // polygon: four points filled with one colour
         Vdp1AddQuad(cmd, c, kQuadFlat, shaded ? gouraud : nullptr);

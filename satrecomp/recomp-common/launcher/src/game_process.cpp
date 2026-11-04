@@ -273,7 +273,7 @@ bool GameProcess::start(const std::filesystem::path& program, const std::vector<
         }
     }
     PROCESS_INFORMATION process{};
-    BOOL started = CreateProcessW(program.wstring().c_str(), line.data(), nullptr, nullptr, output != INVALID_HANDLE_VALUE, 0, nullptr, directory.c_str(),
+    BOOL started = CreateProcessW(program.wstring().c_str(), line.data(), nullptr, nullptr, output != INVALID_HANDLE_VALUE, CREATE_NO_WINDOW, nullptr, directory.c_str(),
                                   &startup, &process);
     if (output != INVALID_HANDLE_VALUE) {
         CloseHandle(output);

@@ -431,6 +431,22 @@ int RunWindowed(Port &port) {
                 } else if (ev.key.scancode == SDL_SCANCODE_F6 || ev.key.scancode == SDL_SCANCODE_F7) {
                     port.menu.SetSlot(port.menu.Slot() + (ev.key.scancode == SDL_SCANCODE_F7 ? 1 : -1));
                     menuDirty = true;
+                } else if (ev.key.scancode == SDL_SCANCODE_F10 && !ev.key.repeat) {
+                    if (!port.gpu) {
+                        note("HD PACK REQUIRES HIGH RESOLUTION");
+                    } else if (port.opt.texturePackPath.empty()) {
+                        note("SELECT AN HD PACK ZIP IN THE LAUNCHER");
+                    } else {
+                        const bool enabled = !satrecomp::FeatureOn("hd_texture_pack");
+                        port.gpu->SetHdTexturePack(enabled);
+                        if (enabled && !port.gpu->HdTexturePackEnabled()) {
+                            note("HD PACK ZIP COULD NOT BE LOADED");
+                        } else {
+                            satrecomp::SetFeature("hd_texture_pack", enabled);
+                            note(enabled ? "HD TEXTURE PACK ON" : "HD TEXTURE PACK OFF");
+                            menuDirty = true;
+                        }
+                    }
                 } else if (ev.key.scancode == SDL_SCANCODE_F11 ||
                            (ev.key.scancode == SDL_SCANCODE_RETURN && (ev.key.mod & SDL_KMOD_ALT))) {
                     const bool fs = SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN;
