@@ -111,6 +111,9 @@ static void RegisterPortFeatures() {
     // (the Display page: how the picture is fitted to the window, video/gpu.h SetFit; the first choice of each
     // is how the port always drew it)
 
+    game.features.push_back({"borderless_window", "Display", "Borderless Window",
+                             "Fill the display with a borderless window."});
+
     game.features.push_back({"hd_texture_pack", "Display", "HD Texture Pack",
                              "Use replacement textures from the local ZIP selected in the launcher. Requires high resolution."});
 

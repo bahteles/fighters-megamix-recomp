@@ -203,6 +203,34 @@ int RunWindowed(Port &port) {
     if (!openWindow(windowWidth, 240 * scale, port.opt.fullscreen ? SDL_WINDOW_FULLSCREEN : 0)) {
         return 1;
     }
+    bool borderless = false;
+    SDL_Rect windowedBounds{};
+    const auto updateBorderless = [&] {
+        const bool wanted = satrecomp::FeatureOn("borderless_window");
+        if (wanted == borderless) {
+            return;
+        }
+        if (wanted) {
+            SDL_Rect bounds{};
+            if (!SDL_GetDisplayBounds(SDL_GetDisplayForWindow(window), &bounds)) {
+                return;
+            }
+            SDL_GetWindowPosition(window, &windowedBounds.x, &windowedBounds.y);
+            SDL_GetWindowSize(window, &windowedBounds.w, &windowedBounds.h);
+            SDL_SetWindowFullscreen(window, false);
+            SDL_RestoreWindow(window);
+            SDL_SetWindowBordered(window, false);
+            SDL_SetWindowPosition(window, bounds.x, bounds.y);
+            SDL_SetWindowSize(window, bounds.w, bounds.h);
+        } else {
+            SDL_SetWindowBordered(window, true);
+            SDL_SetWindowPosition(window, windowedBounds.x, windowedBounds.y);
+            SDL_SetWindowSize(window, windowedBounds.w, windowedBounds.h);
+            SDL_SetWindowFullscreen(window, port.opt.fullscreen);
+        }
+        borderless = wanted;
+    };
+    updateBorderless();
     if (port.gpu) {
         port.gpu->SetFit(satrecomp::FeatureValue("display_scaling"), satrecomp::FeatureValue("display_shape"));
     }
@@ -612,6 +640,7 @@ int RunWindowed(Port &port) {
         if (!noteUntil) { // (nothing just done to tell of: how things stand)
             showNote(paused ? "PAUSED  F8: A FRAME ON  F4: GO ON" : port.menu.Speed() != 100 ? "SPEED " + std::to_string(port.menu.Speed()) + "%" : "");
         }
+        updateBorderless();
         const bool runs = !paused || stepFrame;
         stepFrame = false;
         if (runs) {
@@ -639,7 +668,7 @@ int RunWindowed(Port &port) {
             static float shownAspect = port.gpu->Aspect();
             if (shownAspect != port.gpu->Aspect()) {
                 shownAspect = port.gpu->Aspect();
-                if (!(SDL_GetWindowFlags(window) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED))) {
+                if (!borderless && !(SDL_GetWindowFlags(window) & (SDL_WINDOW_FULLSCREEN | SDL_WINDOW_MAXIMIZED))) {
                     int windowW = 0, windowH = 0;
                     SDL_GetWindowSize(window, &windowW, &windowH);
                     SDL_SetWindowSize(window, static_cast<int>(static_cast<float>(windowH) * shownAspect + 0.5f), windowH);
