@@ -459,7 +459,7 @@ bool Gpu::LoadHdTexturePack() {
     const auto readText = [&](std::istream &input, HdText entry) {
         const size_t count = static_cast<size_t>(entry.width) * entry.height;
         const size_t hdBytes = count * 4 * entry.scale * entry.scale;
-        if (!count || (entry.layer & ~0x80u) >= 4 || (entry.scale != 4 && entry.scale != 8) || pixels.size() + hdBytes > kHdAtlasWidth * kHdMaxRows) {
+        if (!count || (entry.layer & ~0xC0u) >= 4 || (entry.scale != 4 && entry.scale != 8) || pixels.size() + hdBytes > kHdAtlasWidth * kHdMaxRows) {
             return false;
         }
         entry.offset = static_cast<uint32_t>(pixels.size());
@@ -576,9 +576,16 @@ bool Gpu::MatchesHdText(const Frame &frame, const HdText &text) const {
     }
     for (uint32_t y = 0; y < text.height; ++y) {
         const uint32_t *row = frame.layers[(text.layer & 3) + 1] + (text.top + y) * frame.width + left;
+        bool originalWarm = false, currentWarm = false;
         for (uint32_t x = 0; x < text.width; ++x) {
             const uint32_t value = row[x] >> 24 ? row[x] : 0;
             const uint32_t original = text.original[y * text.width + x];
+            if (text.layer & 0x40) {
+                if ((value >> 24) != (original >> 24)) { return false; }
+                originalWarm |= int(original & 255) > int((original >> 16) & 255) + 8;
+                currentWarm |= int(value & 255) > int((value >> 16) & 255) + 8;
+                continue;
+            }
             if (value == original) {
                 continue;
             }
@@ -591,6 +598,7 @@ bool Gpu::MatchesHdText(const Frame &frame, const HdText &text) const {
                 return false;
             }
         }
+        if ((text.layer & 0x40) && originalWarm != currentWarm) { return false; }
     }
     return true;
 }
