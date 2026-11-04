@@ -52,6 +52,9 @@ namespace {
     bool ReadTextureZip(const std::filesystem::path &path, std::string (&members)[5]) {
         std::ifstream file(path, std::ios::binary);
         constexpr size_t maxBytes = 256u * 1024 * 1024;
+        // Source signatures and replacement pixels share the ZIP budget, but only
+        // replacement pixels count against the separately checked GPU atlas limit.
+        constexpr size_t maxTotalBytes = 512u * 1024 * 1024;
         constexpr const char *names[] = {"fighters.fmmtex", "winner.fmmhud", "fight-text.fmmhud", "airport-floor.fmmtex", "backgrounds.fmmtex"};
         size_t total = 0;
         while (file) {
@@ -74,7 +77,7 @@ namespace {
                 file.seekg(compressed, std::ios::cur);
                 continue;
             }
-            if (!members[index].empty() || bytes == 0 || total + bytes > maxBytes) { return false; }
+            if (!members[index].empty() || bytes == 0 || total + bytes > maxTotalBytes) { return false; }
             auto &out = members[index];
             if (method == 0 && compressed == bytes) {
                 out.resize(bytes);

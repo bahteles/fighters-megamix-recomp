@@ -31,3 +31,16 @@ The PNG export accepts both ordinary and Gouraud-shaded RGB555 texture descripto
 including Rent-A-Hero's two banks. Raw banks remain unchanged. The report distinguishes
 complete banks, validated texture prefixes with an unclassified tail, and unresolved layouts.
 An unclassified tail is kept in the raw bank and is not guessed as image data.
+
+To refine the KABE concrete panels and preserve the original lettering as scalable paths,
+install SciPy, vtracer and resvg_py in addition to NumPy and Pillow, then run:
+
+    python tools/hd_batch/refine_stage_wall.py --base-pack path/to/local-pack.zip
+
+The output is work/pack-wall-candidate.zip. All eight wall panels and their three palette
+variants are processed. The paired Fighting Vipers artwork is traced as one image to avoid
+a seam. The broad concrete lighting ramp is smoothed while joints and bolt heads are kept;
+shared-channel dithering reduces banding when encoding the 15-bit replacement colors.
+Original PNGs, generated SVGs, HD previews and a source checksum report stay under
+work/wall-refined/. The base ZIP and original raw banks stay unchanged. Repeated runs replace
+matching texture records rather than accumulating duplicates.
