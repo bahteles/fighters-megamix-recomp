@@ -853,17 +853,14 @@ void Gpu::Draw(const Frame &frame) {
         if (m_hdEnabled && m_hdAirportOffset && floor.planes[5] == 0x20000 && floor.planes[6] == 0x22000 &&
             floor.planes[9] == 0x24000 && floor.planes[10] == 0x26000 &&
             crc32(0, reinterpret_cast<const Bytef *>(floor.vram) + 0x20000, 0xa000) == m_hdAirportCrc[0] &&
-            crc32(0, reinterpret_cast<const Bytef *>(floor.vram) + 0x60000, 124608) == m_hdAirportCrc[1] &&
-            crc32(0, reinterpret_cast<const Bytef *>(frame.colors + 768), 256 * 4) == m_hdAirportCrc[2]) {
+            crc32(0, reinterpret_cast<const Bytef *>(floor.vram) + 0x60000, 124608) == m_hdAirportCrc[1]) {
             uniforms.hdAirport[0] = m_hdAirportOffset;
         }
         // (several samples a pixel when the VDP1's target has more pixels than the output shows)
         const uint32_t samples = std::clamp<uint32_t>((m_spriteHeight * m_scale + m_outputHeight / 2) / m_outputHeight, 1, 4);
         if (m_hdEnabled) {
             for (const auto &replacement : m_hdBackgrounds) {
-                if (crc32(0, floor.vram + replacement.map, 8192) == replacement.crc[0] &&
-                    crc32(0, floor.vram + replacement.cells, replacement.cellBytes) == replacement.crc[1] &&
-                    crc32(0, reinterpret_cast<const Bytef *>(frame.colors + replacement.palette), 256 * 4) == replacement.crc[2]) {
+                if (crc32(0, floor.vram + replacement.cells, replacement.cellBytes) == replacement.crc[1]) {
                     const int layer = replacement.palette == 0 ? 0 : 1;
                     uniforms.hdBackground[layer] = replacement.offset;
                 }

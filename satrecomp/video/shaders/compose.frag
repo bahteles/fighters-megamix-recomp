@@ -188,9 +188,8 @@ vec3 airportFloor(vec2 at, vec3 original) {
     }
     float dots = float(floorSize.y);
     vec2 where = mix(ends.xy, ends.zw, (at.x * dots - 0.5) / max(dots - 1.0, 1.0));
-    if (any(lessThan(where, vec2(0.0))) || any(greaterThanEqual(where, vec2(2048.0)))) {
-        return original;
-    }
+    // Outside the mapped airport apron the game repeats its asphalt character.
+    // Continue the matching outer asphalt replacement through that region too.
     uint address;
     if (all(greaterThanEqual(where, vec2(512.0))) && all(lessThan(where, vec2(1536.0)))) {
         uvec2 pixel = uvec2((where - vec2(512.0)) * 2.0);
@@ -213,6 +212,8 @@ vec4 backgroundLayer(vec4 original, int layer, vec2 at) {
     float dy = mod(following.y - coordinates.y + 512.0, 1024.0) - 512.0;
     float y = coordinates.y + dy * (row - float(nearest));
     vec2 where = mod(vec2(coordinates.x + (at.x * size.x - 0.5) * coordinates.z, y), 1024.0);
+    // The distant panorama uses the same page in both horizontal planes.
+    if (layer == 1) { where.x = mod(where.x, 512.0); }
     if (any(greaterThanEqual(where, vec2(512.0)))) { return original; }
     uvec2 pixel = uvec2(where * 2.0);
     uint address = hdBackground[layer] + 4u * (pixel.y * 1024u + pixel.x);
