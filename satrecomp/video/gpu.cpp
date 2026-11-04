@@ -1238,6 +1238,14 @@ void Gpu::Draw(const Frame &frame) {
                     uniforms.menuBackground[0] = 2;
                     uniforms.menuBackground[1] = menuLayer;
                     break;
+                } else if (a == b && (a >> 24) != 0 && (a & 255u) > 0 &&
+                           ((a >> 8) & 255u) > (a & 255u) &&
+                           ((a >> 16) & 255u) > 2 * ((a >> 8) & 255u) &&
+                           a == background(left + 36, row)) {
+                    // The next-match card has a solid navy field and horizontal edge rules.
+                    uniforms.menuBackground[0] = 3;
+                    uniforms.menuBackground[1] = menuLayer;
+                    break;
                 } else if (menuLayer == 0 && gray(a) && a == b && gray(background(left + 4, 0)) &&
                            gray(background(left + 4, frame.height - 1))) {
                     uniforms.menuBackground[0] = 1;

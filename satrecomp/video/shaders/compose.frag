@@ -347,6 +347,9 @@ vec3 pixel(vec2 at) {
             // A full checker period continues with the same phase on either side.
             x = misc.z + ((cell.x - misc.z) % 32 + 32) % 32;
         }
+        if (menuBackground.x == 3) {
+            x = cell.x < int(size.x) / 2 ? misc.z + 4 : int(size.x) - misc.z - 5;
+        }
         vec4 background = uiPixel(menuBackground.y, ivec2(x, cell.y));
         int layer = 2 + menuBackground.y;
         if (menuBackground.x == 2 && cell.y < int(size.y) / 8) {

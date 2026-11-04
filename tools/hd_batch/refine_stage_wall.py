@@ -86,10 +86,10 @@ for bank in range(16):
             filter_speckle=0,
             color_precision=8,
             layer_difference=1,
-            corner_threshold=90,
-            length_threshold=1.0,
+            corner_threshold=40,
+            length_threshold=0.25,
             max_iterations=10,
-            splice_threshold=45,
+            splice_threshold=15,
             path_precision=3,
         )
         graphic = (
