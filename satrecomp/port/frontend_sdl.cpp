@@ -448,7 +448,7 @@ int RunWindowed(Port &port) {
                     if (!port.menu.IsOpen()) {
                         resetPoint(ev.key.scancode == SDL_SCANCODE_F2);
                     }
-                } else if (ev.key.scancode == SDL_SCANCODE_F4) {
+                } else if (ev.key.scancode == SDL_SCANCODE_F4 && !ev.key.repeat) {
                     paused = !paused;
                 } else if (ev.key.scancode == SDL_SCANCODE_F8) {
                     paused = true;
@@ -471,6 +471,7 @@ int RunWindowed(Port &port) {
                             note("HD PACK ZIP COULD NOT BE LOADED");
                         } else {
                             satrecomp::SetFeature("hd_texture_pack", enabled);
+                            if (paused) { port.gpu->RedrawFrozenFrame(); }
                             note(enabled ? "HD TEXTURE PACK ON" : "HD TEXTURE PACK OFF");
                             menuDirty = true;
                         }

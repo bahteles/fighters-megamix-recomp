@@ -603,9 +603,69 @@ bool Gpu::MatchesHdText(const Frame &frame, const HdText &text) const {
     return true;
 }
 
+void Gpu::RedrawFrozenFrame() {
+    if (!m_frozenFrame.width) { return; }
+    m_redrawing = true;
+    const bool reset = m_frozenFrame.resetSprites;
+    m_frozenFrame.resetSprites = true;
+    Vdp1Event swap{};
+    swap.kind = Vdp1Event::Kind::Swap;
+    m_frozenFrame.events.push_back(swap);
+    Draw(m_frozenFrame);
+    m_frozenFrame.events.pop_back();
+    auto shownEvents = std::move(m_frozenFrame.events);
+    auto shownQuads = std::move(m_frozenFrame.quads);
+    auto shownVram = std::move(m_frozenFrame.vram);
+    m_frozenFrame.events = m_pendingSprites.events;
+    m_frozenFrame.quads = m_pendingSprites.quads;
+    m_frozenFrame.vram = m_pendingSprites.vram;
+    m_frozenFrame.resetSprites = false;
+    Draw(m_frozenFrame);
+    m_frozenFrame.events = std::move(shownEvents);
+    m_frozenFrame.quads = std::move(shownQuads);
+    m_frozenFrame.vram = std::move(shownVram);
+    m_frozenFrame.resetSprites = reset;
+    m_redrawing = false;
+}
+
 void Gpu::Draw(const Frame &frame) {
     if (!m_device || !frame.width || !frame.height || !Prepare(frame)) {
         return;
+    }
+    if (!m_redrawing) {
+        if (frame.resetSprites) {
+            m_pendingSprites = {};
+            m_displaySprites = {};
+        }
+        for (const auto &event : frame.events) {
+            if (event.kind == Vdp1Event::Kind::Swap) {
+                m_displaySprites = m_pendingSprites;
+            } else if (event.kind == Vdp1Event::Kind::Draw) {
+                m_pendingSprites = frame;
+                m_pendingSprites.events = {event};
+            }
+        }
+        m_frozenFrame = frame;
+        m_frozenFrame.events = m_displaySprites.events;
+        m_frozenFrame.quads = m_displaySprites.quads;
+        m_frozenFrame.vram = m_displaySprites.vram;
+        const size_t pixels = static_cast<size_t>(frame.width) * frame.height;
+        for (int n = 0; n < 5; ++n) {
+            m_frozenLayers[n].assign(frame.layers[n], frame.layers[n] + pixels);
+            m_frozenFrame.layers[n] = m_frozenLayers[n].data();
+        }
+        m_frozenWindow.assign(frame.spriteWindow, frame.spriteWindow + pixels);
+        m_frozenFrame.spriteWindow = m_frozenWindow.data();
+        m_frozenBack.assign(frame.back, frame.back + 512);
+        m_frozenFrame.back = m_frozenBack.data();
+        m_frozenColors.assign(frame.colors, frame.colors + 2048);
+        m_frozenFrame.colors = m_frozenColors.data();
+        m_frozenVram2.assign(frame.floor.vram, frame.floor.vram + 0x80000);
+        m_frozenFrame.floor.vram = m_frozenVram2.data();
+        m_frozenFloorLines.assign(frame.floor.lines, frame.floor.lines + 512 * 8);
+        m_frozenFrame.floor.lines = m_frozenFloorLines.data();
+        m_frozenBackgroundLines.assign(frame.backgroundLines, frame.backgroundLines + 512 * 8);
+        m_frozenFrame.backgroundLines = m_frozenBackgroundLines.data();
     }
     m_hudApplied = false;
     if (frame.resetSprites) {
@@ -695,7 +755,7 @@ void Gpu::Draw(const Frame &frame) {
         v.tex[1] = quad.width | (static_cast<uint32_t>(quad.height) << 10) | (static_cast<uint32_t>(quad.lines) << 18);
         v.tex[2] = quad.mode | (static_cast<uint32_t>(quad.flags) << 16);
         v.tex[3] = quad.color;
-        if (m_hdEnabled && (quad.flags & kQuadTextureUpscale) && ((quad.mode >> 3) & 7) == 5) {
+        if (m_hdEnabled && (quad.flags & kQuadTextureUpscale) && (((quad.mode >> 3) & 7) == 5 || ((quad.mode >> 3) & 7) == 0)) {
             const auto quadIndex = static_cast<size_t>(&quad - frame.quads.data());
             while (eventIndex < frame.events.size() &&
                    (frame.events[eventIndex].kind != Vdp1Event::Kind::Draw ||
@@ -704,6 +764,19 @@ void Gpu::Draw(const Frame &frame) {
             }
             if (eventIndex < frame.events.size() && quadIndex >= frame.events[eventIndex].firstQuad) {
                 const auto &vram = frame.vram[frame.events[eventIndex].vram];
+                std::vector<uint8_t> indexed;
+                if (((quad.mode >> 3) & 7) == 0 && quad.texture + (quad.width * quad.height + 1) / 2 <= vram.size()) {
+                    indexed.resize(quad.width * quad.height * 2);
+                    for (uint32_t p = 0; p < quad.width * quad.height; ++p) {
+                        const uint8_t byte = vram[quad.texture + p / 2];
+                        const uint32_t dot = (byte >> ((~p & 1) * 4)) & 15;
+                        const uint32_t rgb = frame.colors[(frame.spriteColorOffset + (quad.color & 0xFFF0) + dot) & 2047];
+                        const uint16_t color = dot && (dot != 15 || (quad.mode & 0x80)) ? 0x8000 | ((rgb & 255) >> 3) |
+                            ((((rgb >> 8) & 255) >> 3) << 5) | ((((rgb >> 16) & 255) >> 3) << 10) : 0;
+                        indexed[p * 2] = color >> 8;
+                        indexed[p * 2 + 1] = color & 255;
+                    }
+                }
                 const uint32_t key = (static_cast<uint32_t>(quad.width) << 16) | quad.height;
                 auto match = std::lower_bound(m_hdTextures.begin(), m_hdTextures.end(), key,
                     [](const HdTexture &texture, uint32_t value) {
@@ -711,8 +784,9 @@ void Gpu::Draw(const Frame &frame) {
                     });
                 for (; match != m_hdTextures.end() && match->width == quad.width && match->height == quad.height; ++match) {
                     const auto &texture = *match;
-                    if (quad.texture + texture.original.size() <= vram.size() &&
-                        std::memcmp(vram.data() + quad.texture, texture.original.data(), texture.original.size()) == 0) {
+                    if ((!indexed.empty() && indexed == texture.original) ||
+                        (((quad.mode >> 3) & 7) == 5 && quad.texture + texture.original.size() <= vram.size() &&
+                         std::memcmp(vram.data() + quad.texture, texture.original.data(), texture.original.size()) == 0)) {
                         v.tex[0] = texture.offset;
                         v.tex[2] |= static_cast<uint32_t>(kQuadHdTexture) << 16;
                         break;
@@ -940,6 +1014,7 @@ void Gpu::Draw(const Frame &frame) {
         SDL_EndGPURenderPass(pass);
     }
     SDL_SubmitGPUCommandBuffer(cmd);
+
 }
 
 bool Gpu::Download(SDL_GPUTexture *texture, uint32_t width, uint32_t height, uint32_t bytesPerPixel, void *out) {

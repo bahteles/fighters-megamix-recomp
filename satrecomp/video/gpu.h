@@ -42,6 +42,7 @@ public:
 
     // Does a frame's VDP1 work and makes the picture, in Output()
     void Draw(const Frame &frame);
+    void RedrawFrozenFrame();
     void SetUiContours(bool enabled) { m_uiContours = enabled; }
     void SetHdTexturePack(bool enabled);
     bool HdTexturePackEnabled() const { return m_hdEnabled; }
@@ -156,6 +157,11 @@ private:
     struct HdBackground { uint32_t offset, map, cells, cellBytes, palette, crc[3]; };
     std::vector<HdBackground> m_hdBackgrounds;
     SDL_GPUTexture *m_backgroundLines = nullptr;
+    Frame m_frozenFrame, m_pendingSprites, m_displaySprites;
+    std::vector<uint32_t> m_frozenLayers[5], m_frozenBack, m_frozenColors;
+    std::vector<uint8_t> m_frozenWindow, m_frozenVram2;
+    std::vector<float> m_frozenFloorLines, m_frozenBackgroundLines;
+    bool m_redrawing = false;
     bool MatchesHdText(const Frame &frame, const HdText &text) const;
     bool m_hdEnabled = false, m_hdAttempted = false;
     bool LoadHdTexturePack();
