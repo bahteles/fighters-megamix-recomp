@@ -1811,6 +1811,21 @@ void App::display_cards(size_t which, float width) {
                     set_toggle(one, toggle, !on);
                 }
             });
+            if (std::string(toggle.key) == "fullscreen") {
+                const auto borderless = std::find_if(one.features.begin(), one.features.end(), [](const auto& feature) {
+                    return feature.name == "borderless_window";
+                });
+                if (borderless != one.features.end()) {
+                    const auto index = static_cast<size_t>(borderless - one.features.begin());
+                    const bool enabled = recomp::FeatureValues(one.settings, one.features)[index] != 0;
+                    inset_separator(width);
+                    row(width, "Borderless window", "Fill the display with a borderless window.", 42.0f, 24.0f, [&] {
+                        if (ui::toggle("##borderless-window", enabled)) {
+                            set_feature(one, index, enabled ? 0 : 1);
+                        }
+                    });
+                }
+            }
         }
         display.end();
     }
@@ -3096,7 +3111,7 @@ void App::title_page(size_t which, float width) {
             return std::any_of(s.where.begin(), s.where.end(), [&](const auto& at) { return at.first == which && at.second == i; });
         });
         if (!shared) {
-            if (one.features[i].name != "hd_texture_pack") {
+            if (one.features[i].name != "hd_texture_pack" && one.features[i].name != "borderless_window") {
                 rows.push_back({&one.features[i], values[i], "", i});
             }
         }
@@ -3622,7 +3637,7 @@ void App::features_page(float width) {
         std::vector<int> values = recomp::FeatureValues(one.settings, one.features);
         std::vector<FeatureRow> rows;
         for (size_t i = 0; i < one.features.size(); i++) {
-            if (one.features[i].name != "hd_texture_pack") {
+            if (one.features[i].name != "hd_texture_pack" && one.features[i].name != "borderless_window") {
                 rows.push_back({&one.features[i], values[i], "", i});
             }
         }
