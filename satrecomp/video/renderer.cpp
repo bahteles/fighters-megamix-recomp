@@ -654,7 +654,12 @@ void Renderer::GpuRow(uint32 row, uint32 y, bool otherField) {
         float *coordinates = &m_backgroundLines[row * 8 + index * 4];
         const uint32 fracX = scroll.fracX + bg.scrollAmountH - WideDots() * scroll.incH;
         coordinates[0] = static_cast<float>(fracX & 0xFFFFF) / 256.0f;
-        coordinates[1] = static_cast<float>((scroll.fracY + bg.scrollAmountV) & 0xFFFFF) / 256.0f;
+        // Reconstruct the missing field at its own map position, as NormalLine does.
+        // Reusing the current field's position for both rows shifts the HD panorama
+        // up and down by one source line whenever field parity changes.
+        const sint32 step = static_cast<sint32>(bg.scrollIncV);
+        const sint32 offsetY = otherField ? ((row & 1) ? step : -step) : 0;
+        coordinates[1] = static_cast<float>((scroll.fracY + bg.scrollAmountV + static_cast<uint32>(offsetY)) & 0xFFFFF) / 256.0f;
         coordinates[2] = static_cast<float>(scroll.incH) / 256.0f;
         coordinates[3] = !bg.bitmap && !bg.mosaicEnable && !bg.vcellScrollEnable &&
                          bg.cellSizeShift == 0 && !bg.twoWordChar &&

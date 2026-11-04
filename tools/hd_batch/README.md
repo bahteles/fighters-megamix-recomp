@@ -22,3 +22,12 @@ edge color limits to avoid light halos.
 The runtime verifies source and palette checksums before applying replacements and loads the
 pages and panel variants needed by the current stage. Missing or unsupported resources retain
 the original rendering. Flat-color geometry does not have replacement textures.
+
+Fighter originals can be exported independently:
+
+    python tools/hd_batch/export_fighter_textures.py work/fmm-data.bin work/archive-textures
+
+The PNG export accepts both ordinary and Gouraud-shaded RGB555 texture descriptors,
+including Rent-A-Hero's two banks. Raw banks remain unchanged. The report distinguishes
+complete banks, validated texture prefixes with an unclassified tail, and unresolved layouts.
+An unclassified tail is kept in the raw bank and is not guessed as image data.

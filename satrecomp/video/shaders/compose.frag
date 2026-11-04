@@ -252,7 +252,7 @@ vec3 airportFloor(vec2 at, vec3 original) {
 vec4 backgroundLayer(vec4 original, int layer, vec2 at) {
     if (layer > 1 || original.a == 0.0) { return original; }
     float row = at.y * size.y - 0.5;
-    int nearest = clamp(int(floor(row + 0.5)), 0, int(size.y) - 1);
+    int nearest = clamp(int(floor(row)), 0, int(size.y) - 1);
     vec4 coordinates = texelFetch(backgroundLines, ivec2(layer, nearest), 0);
     if (coordinates.w < 0.5) { return original; }
     int next = min(nearest + 1, int(size.y) - 1);
