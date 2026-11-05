@@ -26,7 +26,8 @@ A legally obtained game disc image is required by the original build workflow.
 ## Development status
 
 The Windows game and launcher were built and tested locally. Frame captures were used locally to
-check selected rendering changes. No game captures or extracted resources are added by this fork.
+check selected rendering changes. A Gallery demonstration capture is maintained in `docs/screenshots/`
+for the README. Extracted resources and texture packs are not added by this fork.
 The complete upstream determinism and rewrite checks have not yet been run for these modifications.
 The toolkit and common launcher are locally modified copies. Upstream copy-integrity checks will
 report these differences until the changes are maintained and synchronized through component forks.
