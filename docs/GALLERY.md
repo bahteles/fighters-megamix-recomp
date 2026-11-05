@@ -38,3 +38,16 @@ The Gallery also supports switching the optional HD textures without changing th
 Never commit the local `gallery/` folder, `.fmg`, `.fmui`, `.rgba`, texture archives, disc images,
 saves, memory dumps, or generated game code. Ignore rules cover local Gallery resources and
 archives; `tools/audit.sh` also rejects their formats among tracked files.
+
+## Updating the local typography
+
+The Gallery uses a large character title, gold section headings, and smaller sans-serif settings.
+After updating the executable, update an existing local theme using Python and Pillow:
+
+```sh
+python tools/gallery/update_typography.py /path/to/gallery/gallery-theme.fmui --serif /path/to/serif.ttf --sans /path/to/sans.ttf
+```
+
+Use a bold italic serif face for titles and a regular sans-serif face for settings. Back up the
+local theme first. The script retains existing artwork and adds the labels needed by the current
+layout; it does not bundle or upload artwork, models, fonts, or texture packs.

@@ -335,13 +335,15 @@ void Show(){
                 if(e.button.x<360&&e.button.button==SDL_BUTTON_LEFT){
                     float y=e.button.y;
                     if(y>=655){running=false;continue;}
-                    if(y>=110&&y<160&&catalogMode){picker=true;pickCursor=selected;}
-                    if(y>=164&&y<218){if(catalogMode)change(-1);else{selected=0;reset();}}
-                    if(y>=230&&y<284){if(catalogMode)change(1);else{selected=1;reset();}}
-                    if(y>=334&&y<376)spin=!spin;
-                    if(y>=386&&y<428)wire=!wire;
-                    if(y>=475&&y<532)armor();
-                    if(y>=575&&y<642)color(1);
+                    if(y>=104&&y<174&&catalogMode){picker=true;pickCursor=selected;}
+                    if(y>=182&&y<226){
+                        if(catalogMode)change(e.button.x<166?-1:1);
+                        else{selected=e.button.x<166?0:1;reset();}
+                    }
+                    if(y>=302&&y<340)spin=!spin;
+                    if(y>=346&&y<384)wire=!wire;
+                    if(y>=450&&y<492)armor();
+                    if(y>=580&&y<620)color(1);
                 }else{drag=e.button.button==SDL_BUTTON_LEFT;pan=e.button.button==SDL_BUTTON_RIGHT;}
             }
             if(e.type==SDL_EVENT_MOUSE_BUTTON_UP){if(e.button.button==SDL_BUTTON_LEFT)drag=false;if(e.button.button==SDL_BUTTON_RIGHT)pan=false;}
@@ -405,38 +407,39 @@ void Show(){
         }
         SDL_SetRenderClipRect(renderer,nullptr);
         theme.Header("GALLERY",width);
-        theme.Text("plain","C: SELECT CHARACTER",32,100,16,270);
         const std::string name=catalogMode?catalog[selected].name:(selected?"Player 2":"Player 1");
-        theme.Text("warm",name,32,128,37,285);
+        theme.Text("serif","Character: "+name,32,110,34,310);
         if(catalogMode){
             char counter[16];snprintf(counter,sizeof(counter),"%02d / 32",selected+1);
-            theme.Text("plain",counter,290,104,15,66);
+            theme.Text("ui",counter,32,158,14,90);
+            theme.Text("ui","C: Select character",128,158,14,220);
         }
-        theme.Text("serif","Previous",34,181,34,270);
-        theme.Text("serif","Next",34,247,34,270);
-        theme.Text("plain","VIEW",32,309,18,300);
-        theme.Text("serif","Auto Rotate",34,345,31,228);
-        theme.Text(spin?"warm":"serif",spin?"On":"Off",282,349,26,65);
-        theme.Text("serif","Wireframe",34,397,31,228);
-        theme.Text(wire?"warm":"serif",wire?"On":"Off",282,401,26,65);
-        theme.Text("plain","ARMOR",32,466,18,300);
+        theme.Text("ui","Previous",34,194,22,125);
+        theme.Text("ui","|",162,194,22,12);
+        theme.Text("ui","Next",185,194,22,125);
+        theme.Text("gold","View",32,254,26,300);
+        theme.Text("ui","Auto-Rotate",34,312,22,222);
+        theme.Text("ui",spin?"On":"Off",282,312,22,65);
+        theme.Text("ui","Wireframe",34,356,22,222);
+        theme.Text("ui",wire?"On":"Off",282,356,22,65);
+        theme.Text("gold","Armor",32,414,26,300);
         if(catalogMode&&!catalog[selected].colors[colorIndex].broken.empty()){
-            theme.Text("warm",armorFull?"Full":"Broken",34,497,38,300);
-            theme.Text("plain","A: CHANGE ARMOR",32,546,16,300);
-        }else theme.Text("serif","Not Applicable",34,499,29,310);
-        theme.Text("plain","COLOR",32,568,18,300);
+            theme.Text("ui",armorFull?"Full":"Broken",34,460,22,300);
+            theme.Text("ui","A: Change armor",34,500,13,300);
+        }else theme.Text("ui","Not applicable",34,460,22,310);
+        theme.Text("gold","Color",32,542,26,300);
         if(catalogMode&&catalog[selected].colors.size()>1){
             char label[40];snprintf(label,sizeof(label),"%d / %zu",colorIndex+1,catalog[selected].colors.size());
-            theme.Text("warm",label,34,594,30,300);
-            theme.Text("plain","V / B: NEXT / PREVIOUS",32,632,13,300);
-        }else theme.Text("serif","Original",34,598,27,300);
+            theme.Text("ui",label,34,590,22,300);
+            theme.Text("ui","V / B: Next / Previous",34,628,13,300);
+        }else theme.Text("ui","Original",34,590,22,300);
         theme.Text("serif",name,side+viewWidth/2,102,39,viewWidth-90,true);
         theme.Text(hd?"warm":"serif",hd?"HD":"SD",width-90,107,28,70);
         // The same blue strip and silver rule frame the controls as the title.
         fill(0,height-65,width,65,0,0,65);
         fill(16,height-66,width-32,1,156,156,213);
-        theme.Text("serif","Mode Select",32,height-52,33,300);
-        theme.Text("plain","ESC: MODE SELECT",34,height-17,11,270);
+        theme.Text("ui","Mode Select",32,height-48,22,300);
+        theme.Text("ui","Esc: Back",34,height-19,11,270);
         theme.Text("plain","DRAG: ROTATE     WHEEL: ZOOM     RIGHT DRAG: PAN",390,height-51,16,width-420);
         theme.Text("plain","TAB: NEXT     SPACE: AUTO ROTATE     F10: SD / HD",390,height-24,15,width-420);
         if(picker){
