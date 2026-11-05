@@ -364,7 +364,18 @@ void Shading::Show(const uint32_t *pixels, int width, int height, const SDL_FRec
     if (!m_context || !library) {
         return;
     }
-    SDL_GL_MakeCurrent(m_window, m_context);
+    int windowWidth=0,windowHeight=0;
+    Size(windowWidth,windowHeight);
+    if(windowWidth<=0||windowHeight<=0||(SDL_GetWindowFlags(m_window)&SDL_WINDOW_MINIMIZED))return;
+    if(!SDL_GL_MakeCurrent(m_window,m_context)){
+        m_refreshPending=true;
+        return;
+    }
+    if(m_refreshPending){
+        m_refreshPending=false;
+        const std::string preset=m_preset;
+        if(!preset.empty()&&!Load(preset,error)&&error!=m_lastError){fprintf(stderr,"shader recovery: %s\n",error.c_str());m_lastError=error;}
+    }
     if (!m_picture || width != m_width || height != m_height) {
         MakeTexture(m_picture, m_pictureFrame, width, height, GL_LINEAR);
         MakeTexture(m_readout, m_readoutFrame, width, height, GL_NEAREST);
@@ -381,8 +392,6 @@ void Shading::Show(const uint32_t *pixels, int width, int height, const SDL_FRec
     }
     gl.BindTexture(GL_TEXTURE_2D, 0);
 
-    int windowWidth = 0, windowHeight = 0;
-    Size(windowWidth, windowHeight);
     gl.Disable(GL_SCISSOR_TEST);
     gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
     gl.ClearColor(0, 0, 0, 1);
@@ -390,6 +399,7 @@ void Shading::Show(const uint32_t *pixels, int width, int height, const SDL_FRec
     // (the window's rows count up from its foot, and the picture's first row is its top)
     const int left = static_cast<int>(std::lround(where.x)), right = static_cast<int>(std::lround(where.x + where.w));
     const int top = windowHeight - static_cast<int>(std::lround(where.y)), foot = windowHeight - static_cast<int>(std::lround(where.y + where.h));
+    bool filtered=false;
     if (shade && m_chain) {
         // The preset draws the picture into a texture of `where`'s size, which then goes to the window
         const int drawnWidth = right - left, drawnHeight = top - foot;
@@ -412,11 +422,14 @@ void Shading::Show(const uint32_t *pixels, int width, int height, const SDL_FRec
         options.frames_per_second = 59.8261f; // (the Saturn's, NTSC)
         options.frametime_delta = 17;
         options.brightness_nits = 200;
-        const std::string failed = Message(*library, library->chain_frame(Chain(m_chain), m_frame++, in, out, &viewport, nullptr, &options));
+        std::string failed = Message(*library, library->chain_frame(Chain(m_chain), m_frame++, in, out, &viewport, nullptr, &options));
+        if(const char *test=getenv("SATRECOMP_SHADER_TEST_FAIL_FRAME");test&&m_frame==size_t(strtoul(test,nullptr,10)))failed="injected frame failure";
         // (librashader leaves its own framebuffers and scissor as they were in its last pass)
         gl.Disable(GL_SCISSOR_TEST);
         gl.BindFramebuffer(GL_DRAW_FRAMEBUFFER, 0);
         if (failed.empty()) {
+            filtered=true;
+            m_lastError.clear();
             gl.BindFramebuffer(GL_READ_FRAMEBUFFER, m_drawnFrame);
             // (librashader's picture has its first row at the texture's start too, as it was given it)
             if (!zoomed) {
@@ -447,10 +460,11 @@ void Shading::Show(const uint32_t *pixels, int width, int height, const SDL_FRec
                                        windowHeight - static_cast<int>(std::lround(where.y + (keep.y + keep.h) * down)), GL_COLOR_BUFFER_BIT, GL_NEAREST);
                 }
             }
-        } else if (m_frame == 1) {
-            fprintf(stderr, "shader: %s\n", failed.c_str());
+        } else if(failed!=m_lastError){
+            fprintf(stderr,"shader frame fallback: %s\n",failed.c_str());m_lastError=failed;
         }
-    } else {
+    }
+    if(!filtered){
         gl.BindFramebuffer(GL_READ_FRAMEBUFFER, m_pictureFrame);
         gl.BlitFramebuffer(0, 0, width, height, left, top, right, foot, GL_COLOR_BUFFER_BIT, GL_LINEAR);
     }

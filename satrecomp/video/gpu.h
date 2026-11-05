@@ -10,6 +10,8 @@
 #include <SDL3/SDL.h>
 
 #include <cstdint>
+#include <array>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -47,6 +49,7 @@ public:
     bool DrawInterpolated(float fraction);
     void SetInterpolation(bool enabled);
     uint64_t InterpolatedPictures() const { return m_interpolatedPictures; }
+    uint64_t SourcePictures() const { return m_sourcePictures; }
     void SetUiContours(bool enabled) { m_uiContours = enabled; }
     void SetHdTexturePack(bool enabled);
     bool HdTexturePackEnabled() const { return m_hdEnabled; }
@@ -114,9 +117,18 @@ public:
         m_hudShown = false;
     }
     bool ReadShown(std::vector<uint32_t> &pixels);
+    // Pipeline GPU -> CRT transfers instead of stalling the CPU for every presentation.
+    bool ReadShownAsync(std::vector<uint32_t> &pixels);
+    uint64_t AsyncPictures() const {return m_asyncDelivered;}
 
 private:
     void ApplyHud();
+    struct Readback {SDL_GPUTransferBuffer *buffer=nullptr;SDL_GPUFence *fence=nullptr;uint64_t serial=0;};
+    Readback m_readbacks[3];
+    std::vector<uint32_t> m_asyncPixels;
+    uint32_t m_asyncWidth=0,m_asyncHeight=0;
+    uint64_t m_asyncSerial=0,m_asyncDelivered=0;
+    void ResetReadbacks();
     SDL_GPUGraphicsPipeline *m_hudPipeline = nullptr;
     SDL_GPUSampler *m_linear = nullptr;
     SDL_GPUTexture *m_hud = nullptr;
@@ -152,6 +164,8 @@ private:
         uint32_t previewOffset = 0;
     };
     std::vector<HdTexture> m_hdTextures;
+    std::unordered_map<uint64_t,std::vector<size_t>> m_hdMatches;
+    const HdTexture *MatchHd(uint16_t width,uint16_t height,const uint8_t *pixels,size_t bytes) const;
     std::string m_hdPackPath;
     std::string m_hdPreview; // only retained while the modal viewer is open
     SDL_GPUTexture *m_hdAtlas = nullptr;
@@ -185,6 +199,14 @@ private:
     std::vector<float> m_frozenFloorLines, m_frozenBackgroundLines;
     bool m_redrawing = false;
     bool m_interpolationEnabled = false;
+    bool m_presentationOnly = false, m_previewVramValid = false;
+    SDL_GPUTexture *m_previewSprites[2] = {}, *m_previewVram = nullptr;
+    uint32_t m_previewWidth = 0, m_previewHeight = 0, m_previewScale = 0;
+    std::vector<std::array<uint32_t,8>> m_pendingMaterials, m_displayMaterials;
+    std::vector<uint8_t> m_cachedCompose;
+    std::vector<Quad> m_motionStart;
+    bool m_motionReady = false, m_motionAvailable = false;
+    uint64_t m_sourcePictures = 0;
     std::vector<Quad> m_previousQuads;
     uint32_t m_pictureAge = 0, m_pictureInterval = 1;
     uint64_t m_interpolatedPictures = 0;

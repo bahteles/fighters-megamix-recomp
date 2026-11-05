@@ -268,6 +268,9 @@ void Gpu::Shutdown() {
         return;
     }
     SDL_WaitForGPUIdle(m_device);
+    ResetReadbacks();
+    for(auto *&texture:m_previewSprites)Release(texture);
+    Release(m_previewVram);
     for (auto *&texture : m_sprites) {
         Release(texture);
     }
@@ -418,6 +421,7 @@ bool Gpu::Prepare(const Frame &frame) {
 }
 
 void Gpu::SetHdTexturePack(bool enabled) {
+    const bool before=m_hdEnabled;
     if (enabled && !m_hdAttempted) {
         m_hdAttempted = true;
         if (!LoadHdTexturePack()) {
@@ -425,6 +429,7 @@ void Gpu::SetHdTexturePack(bool enabled) {
         }
     }
     m_hdEnabled = enabled && !m_hdTextures.empty();
+    if(before!=m_hdEnabled){m_displayMaterials.clear();m_pendingMaterials.clear();m_previewVramValid=false;}
 }
 
 bool Gpu::LoadHdTexturePack() {
@@ -577,8 +582,23 @@ bool Gpu::LoadHdTexturePack() {
         return sizeKey(a) < sizeKey(b);
     });
     m_hdTextures = std::move(textures);
+    m_hdMatches.clear();
+    for(size_t i=0;i<m_hdTextures.size();i++){
+        const auto &texture=m_hdTextures[i];
+        uint64_t key=(uint64_t(texture.width)<<48)|(uint64_t(texture.height)<<32)|crc32(0,texture.original.data(),texture.original.size());
+        m_hdMatches[key].push_back(i);
+    }
     IndexStagePages();
     return true;
+}
+
+const Gpu::HdTexture *Gpu::MatchHd(uint16_t width,uint16_t height,const uint8_t *pixels,size_t bytes)const{
+    uint64_t key=(uint64_t(width)<<48)|(uint64_t(height)<<32)|crc32(0,pixels,bytes);
+    auto found=m_hdMatches.find(key);if(found==m_hdMatches.end())return nullptr;
+    for(size_t index:found->second){const auto &texture=m_hdTextures[index];
+        if(texture.original.size()==bytes&&!memcmp(texture.original.data(),pixels,bytes))return &texture;
+    }
+    return nullptr;
 }
 
 bool Gpu::PreviewHdTexture(int width, int height, const uint32_t *original, std::vector<uint32_t> &replacement) {
@@ -922,18 +942,58 @@ void Gpu::SetInterpolation(bool enabled) {
     if (m_interpolationEnabled == enabled) return;
     m_interpolationEnabled = enabled;
     m_previousQuads.clear();
+    m_motionReady = false;
     m_pictureAge = 0;
     m_pictureInterval = 1;
 }
 
 bool Gpu::DrawInterpolated(float fraction) {
-    if (!m_interpolationEnabled || m_previousQuads.empty()) return false;
-    const float alpha = std::clamp((m_pictureAge + fraction) / m_pictureInterval, 0.f, 1.f);
-    auto quads = m_frozenFrame.quads;
-    if (!InterpolateQuads(m_previousQuads,quads,alpha)) return false;
+    if (!m_interpolationEnabled || m_previousQuads.empty() || m_cachedCompose.empty() ||
+        m_wantedWidth != m_outputWidth || m_wantedHeight != m_outputHeight) return false;
+    if(!m_motionReady){
+        m_motionStart=m_frozenFrame.quads;
+        m_motionAvailable=InterpolateQuads(m_previousQuads,m_motionStart,0)>0;
+        m_motionReady=true;
+    }
+    if(!m_motionAvailable||m_motionStart.size()!=m_frozenFrame.quads.size()||
+       m_displayMaterials.size()!=m_frozenFrame.quads.size())return false;
+    if(!m_previewSprites[0]||m_previewWidth!=m_spriteWidth||m_previewHeight!=m_spriteHeight||m_previewScale!=m_scale){
+        for(auto *&texture:m_previewSprites){Release(texture);texture=Texture(SDL_GPU_TEXTUREFORMAT_R16_UINT,m_spriteWidth*m_scale,m_spriteHeight*m_scale,true);}
+        m_previewWidth=m_spriteWidth;m_previewHeight=m_spriteHeight;m_previewScale=m_scale;
+    }
+    if(!m_previewVram){m_previewVram=Texture(SDL_GPU_TEXTUREFORMAT_R16_UINT,kVramWidth,kVramHeight,false);m_previewVramValid=false;}
+    if(!m_previewSprites[0]||!m_previewSprites[1]||!m_previewVram)return false;
+    const float alpha=std::clamp((m_pictureAge+fraction)/m_pictureInterval,0.f,1.f);
+    auto quads=m_frozenFrame.quads;
+    for(size_t i=0;i<quads.size();i++)for(int c=0;c<4;c++)for(int a=0;a<2;a++)
+        quads[i].corner[c][a]=m_motionStart[i].corner[c][a]+alpha*(quads[i].corner[c][a]-m_motionStart[i].corner[c][a]);
+    static unsigned verified=0;
+    const bool verify=getenv("SATRECOMP_INTERPOLATION_VALIDATE")&&verified<8;
+    std::vector<uint16_t> before;uint32_t beforeWidth=0,beforeHeight=0;
+    if(verify&&!ReadSprites(before,beforeWidth,beforeHeight))return false;
+    // Extra pictures use their own sprite/VRAM targets. The machine's pending and
+    // displayed framebuffers never need to be reconstructed or copied back.
+    SDL_GPUTexture *original[2]={m_sprites[0],m_sprites[1]};
+    m_sprites[0]=m_previewSprites[0];m_sprites[1]=m_previewSprites[1];
+    std::swap(m_vram,m_previewVram);
     m_frozenFrame.quads.swap(quads);
-    RedrawFrozenFrame();
+    const bool reset=m_frozenFrame.resetSprites;m_frozenFrame.resetSprites=true;
+    m_frozenFrame.events.push_back({Vdp1Event::Kind::Swap});
+    m_redrawing=m_presentationOnly=true;
+    Draw(m_frozenFrame);
+    m_redrawing=m_presentationOnly=false;
+    m_frozenFrame.events.pop_back();m_frozenFrame.resetSprites=reset;
     m_frozenFrame.quads.swap(quads);
+    std::swap(m_vram,m_previewVram);
+    m_previewSprites[0]=m_sprites[0];m_previewSprites[1]=m_sprites[1];
+    m_sprites[0]=original[0];m_sprites[1]=original[1];
+    m_previewVramValid=true;
+    if(verify){
+        std::vector<uint16_t> after;uint32_t width=0,height=0;
+        if(!ReadSprites(after,width,height)||width!=beforeWidth||height!=beforeHeight||before!=after)
+            fprintf(stderr,"Interpolation framebuffer preservation: FAILED\n");
+        else if(++verified==8)fprintf(stderr,"Interpolation framebuffer preservation: passed 8 GPU comparisons\n");
+    }
     ++m_interpolatedPictures;
     return true;
 }
@@ -944,14 +1004,16 @@ void Gpu::Draw(const Frame &frame) {
     }
     if (!m_redrawing) {
         if (frame.resetSprites) {
+            ResetReadbacks();
             m_pendingSprites = {};
             m_displaySprites = {};
             m_previousQuads.clear();
             m_pictureAge = 0;
+            m_pendingMaterials.clear();m_displayMaterials.clear();m_motionReady=false;
         }
         if (m_frozenFrame.width != frame.width || m_frozenFrame.height != frame.height ||
             m_frozenFrame.spriteWidth != frame.spriteWidth || m_frozenFrame.spriteHeight != frame.spriteHeight) {
-            m_previousQuads.clear(); m_pictureAge=0;
+            m_previousQuads.clear(); m_pictureAge=0;m_motionReady=false;
         }
         ++m_pictureAge;
         for (const auto &event : frame.events) {
@@ -962,6 +1024,8 @@ void Gpu::Draw(const Frame &frame) {
                             return a.texture == b.texture && a.color == b.color && a.mode == b.mode && a.flags == b.flags &&
                                 a.width == b.width && a.height == b.height && !std::memcmp(a.corner,b.corner,sizeof(a.corner));
                         });
+                m_previewVramValid=false;
+                if(!samePicture){++m_sourcePictures;m_motionReady=false;}
                 if (m_interpolationEnabled && !samePicture && !m_displaySprites.quads.empty()) {
                     m_previousQuads = m_displaySprites.quads;
                     m_pictureInterval = std::clamp(m_pictureAge, 1u, 4u);
@@ -996,7 +1060,7 @@ void Gpu::Draw(const Frame &frame) {
         m_frozenFrame.backgroundLines = m_frozenBackgroundLines.data();
     }
     uint32_t stageFloorOffsets[64]{}, stageBackgroundOffsets[32]{};
-    if (m_hdEnabled) { StagePageOffsets(frame, stageFloorOffsets, stageBackgroundOffsets); }
+    if (m_hdEnabled && !m_presentationOnly) { StagePageOffsets(frame, stageFloorOffsets, stageBackgroundOffsets); }
     m_hudApplied = false;
     if (frame.resetSprites) {
         SDL_GPUCommandBuffer *clear = SDL_AcquireGPUCommandBuffer(m_device);
@@ -1064,6 +1128,8 @@ void Gpu::Draw(const Frame &frame) {
     // Each quad as the rectangle around it (two triangles), no further than its clipping rectangle
     auto *vertex = reinterpret_cast<Vertex *>(bytes + vertexAt);
     size_t eventIndex = 0;
+    std::vector<std::array<uint32_t,8>> materials(frame.quads.size());
+    const bool reuseMaterials=m_presentationOnly&&m_displayMaterials.size()==frame.quads.size();
     for (const Quad &quad : frame.quads) {
         float x0 = quad.corner[0][0], x1 = x0, y0 = quad.corner[0][1], y1 = y0;
         for (int i = 1; i < 4; i++) {
@@ -1081,6 +1147,11 @@ void Gpu::Draw(const Frame &frame) {
         memcpy(v.cd, quad.corner[2], sizeof(float) * 4);
         memcpy(v.clip, quad.clip, sizeof(v.clip));
         memcpy(v.clipOut, quad.clipOut, sizeof(v.clipOut));
+        const size_t materialIndex=size_t(&quad-frame.quads.data());
+        if(reuseMaterials){
+            memcpy(v.tex,m_displayMaterials[materialIndex].data(),sizeof(v.tex));
+            memcpy(v.gouraud,m_displayMaterials[materialIndex].data()+4,sizeof(v.gouraud));
+        }else{
         v.tex[0] = quad.texture;
         v.tex[1] = quad.width | (static_cast<uint32_t>(quad.height) << 10) | (static_cast<uint32_t>(quad.lines) << 18);
         v.tex[2] = quad.mode | (static_cast<uint32_t>(quad.flags) << 16);
@@ -1107,21 +1178,13 @@ void Gpu::Draw(const Frame &frame) {
                         indexed[p * 2 + 1] = color & 255;
                     }
                 }
-                const uint32_t key = (static_cast<uint32_t>(quad.width) << 16) | quad.height;
-                auto match = std::lower_bound(m_hdTextures.begin(), m_hdTextures.end(), key,
-                    [](const HdTexture &texture, uint32_t value) {
-                        return ((static_cast<uint32_t>(texture.width) << 16) | texture.height) < value;
-                    });
-                for (; match != m_hdTextures.end() && match->width == quad.width && match->height == quad.height; ++match) {
-                    const auto &texture = *match;
-                    if ((!indexed.empty() && indexed == texture.original) ||
-                        (((quad.mode >> 3) & 7) == 5 && quad.texture + texture.original.size() <= vram.size() &&
-                         std::memcmp(vram.data() + quad.texture, texture.original.data(), texture.original.size()) == 0)) {
-                        v.tex[0] = texture.offset;
-                        v.tex[2] |= static_cast<uint32_t>(kQuadHdTexture) << 16;
-                        break;
-                    }
+                const HdTexture *match=nullptr;
+                if(!indexed.empty())match=MatchHd(quad.width,quad.height,indexed.data(),indexed.size());
+                else if(((quad.mode>>3)&7)==5){
+                    size_t bytes=size_t(quad.width)*quad.height*2;
+                    if(quad.texture+bytes<=vram.size())match=MatchHd(quad.width,quad.height,vram.data()+quad.texture,bytes);
                 }
+                if(match){v.tex[0]=match->offset;v.tex[2]|=static_cast<uint32_t>(kQuadHdTexture)<<16;}
             }
         }
         const auto quadIndex = static_cast<size_t>(&quad - frame.quads.data());
@@ -1133,6 +1196,9 @@ void Gpu::Draw(const Frame &frame) {
         for (int i = 0; i < 4; i++) {
             v.gouraud[i] = quad.gouraud[i];
         }
+        }
+        memcpy(materials[materialIndex].data(),v.tex,sizeof(v.tex));
+        memcpy(materials[materialIndex].data()+4,v.gouraud,sizeof(v.gouraud));
         const float rect[6][2] = {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y0}, {x1, y1}, {x0, y1}};
         for (const auto &corner : rect) {
             v.position[0] = corner[0];
@@ -1140,9 +1206,12 @@ void Gpu::Draw(const Frame &frame) {
             *vertex++ = v;
         }
     }
+    if(!m_presentationOnly||!m_previewVramValid){
     for (size_t i = 0; i < frame.vram.size(); i++) {
         memcpy(bytes + vramAt[i], frame.vram[i].data(), std::min<size_t>(vramBytes, frame.vram[i].size()));
     }
+    }
+    if(!m_presentationOnly){
     for (int i = 0; i < 5; i++) {
         memcpy(bytes + layerAt[i], frame.layers[i], layerBytes);
     }
@@ -1154,6 +1223,7 @@ void Gpu::Draw(const Frame &frame) {
     memcpy(bytes + vram2At, frame.floor.vram, vramBytes);
     memcpy(bytes + floorAt, frame.floor.lines, 512 * 8 * sizeof(float));
     memcpy(bytes + backgroundAt, frame.backgroundLines, 512 * 8 * sizeof(float));
+    }
     SDL_UnmapGPUTransferBuffer(m_device, m_transfer);
 
     SDL_GPUCommandBuffer *cmd = SDL_AcquireGPUCommandBuffer(m_device);
@@ -1177,6 +1247,7 @@ void Gpu::Draw(const Frame &frame) {
             SDL_GPUBufferRegion region{m_vertices, 0, vertexBytes};
             SDL_UploadToGPUBuffer(pass, &source, &region, true);
         }
+        if(!m_presentationOnly){
         for (int i = 0; i < 5; i++) {
             uploadTexture(pass, m_layers[i], layerAt[i], frame.width, frame.height);
         }
@@ -1186,6 +1257,7 @@ void Gpu::Draw(const Frame &frame) {
         uploadTexture(pass, m_vram2, vram2At, kVramWidth, kVramHeight);
         uploadTexture(pass, m_floorLines, floorAt, 2, 512);
         uploadTexture(pass, m_backgroundLines, backgroundAt, 2, 512);
+        }
         SDL_EndGPUCopyPass(pass);
     }
 
@@ -1198,7 +1270,7 @@ void Gpu::Draw(const Frame &frame) {
             continue;
         }
         const bool erase = event.kind == Vdp1Event::Kind::Erase;
-        if (!erase) {
+        if (!erase && (!m_presentationOnly || !m_previewVramValid)) {
             SDL_GPUCopyPass *pass = SDL_BeginGPUCopyPass(cmd);
             uploadTexture(pass, m_vram, vramAt[event.vram], kVramWidth, kVramHeight);
             SDL_EndGPUCopyPass(pass);
@@ -1228,6 +1300,9 @@ void Gpu::Draw(const Frame &frame) {
     // The picture
     {
         ComposeUniforms uniforms{};
+        if(m_presentationOnly&&m_cachedCompose.size()==sizeof(uniforms)){
+            memcpy(&uniforms,m_cachedCompose.data(),sizeof(uniforms));
+        }else{
         UpdateScreenArt(frame,uniforms.screenRect,uniforms.screenMeta);
         uniforms.size[0] = static_cast<float>(frame.width);
         uniforms.size[1] = static_cast<float>(frame.height);
@@ -1349,6 +1424,8 @@ void Gpu::Draw(const Frame &frame) {
             }
         }
 
+        m_cachedCompose.resize(sizeof(uniforms));memcpy(m_cachedCompose.data(),&uniforms,sizeof(uniforms));
+        }
         SDL_GPUColorTargetInfo target{};
         target.texture = m_output;
         target.load_op = SDL_GPU_LOADOP_DONT_CARE;
@@ -1369,6 +1446,12 @@ void Gpu::Draw(const Frame &frame) {
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
         SDL_EndGPURenderPass(pass);
     }
+    if(!m_redrawing){
+        for(const auto &event:frame.events){
+            if(event.kind==Vdp1Event::Kind::Draw)m_pendingMaterials=materials;
+            else if(event.kind==Vdp1Event::Kind::Swap)m_displayMaterials=m_pendingMaterials;
+        }
+    }else if(m_presentationOnly&&!reuseMaterials)m_displayMaterials=std::move(materials);
     SDL_SubmitGPUCommandBuffer(cmd);
 
 }
@@ -1568,6 +1651,53 @@ void Gpu::ApplyHud() {
 bool Gpu::ReadShown(std::vector<uint32_t> &pixels) {
     ApplyHud();
     return Read(pixels);
+}
+
+void Gpu::ResetReadbacks(){
+    // Called only on state/size transitions or shutdown, never per presentation.
+    for(auto &slot:m_readbacks){
+        if(slot.fence){SDL_WaitForGPUFences(m_device,true,&slot.fence,1);SDL_ReleaseGPUFence(m_device,slot.fence);}
+        if(slot.buffer)SDL_ReleaseGPUTransferBuffer(m_device,slot.buffer);
+        slot={};
+    }
+    m_asyncPixels.clear();m_asyncWidth=m_asyncHeight=0;
+}
+
+bool Gpu::ReadShownAsync(std::vector<uint32_t> &pixels){
+    if(!m_output)return false;
+    ApplyHud();
+    if(m_asyncWidth!=m_outputWidth||m_asyncHeight!=m_outputHeight){
+        ResetReadbacks();m_asyncWidth=m_outputWidth;m_asyncHeight=m_outputHeight;
+    }
+    const uint32_t bytes=m_asyncWidth*m_asyncHeight*4;
+    Readback *latest=nullptr;
+    for(auto &slot:m_readbacks)if(slot.fence&&SDL_QueryGPUFence(m_device,slot.fence)){
+        if(!latest||slot.serial>latest->serial)latest=&slot;
+    }
+    if(latest){
+        if(const void *data=SDL_MapGPUTransferBuffer(m_device,latest->buffer,false)){
+            m_asyncPixels.resize(size_t(m_asyncWidth)*m_asyncHeight);
+            memcpy(m_asyncPixels.data(),data,bytes);SDL_UnmapGPUTransferBuffer(m_device,latest->buffer);
+            ++m_asyncDelivered;
+        }
+    }
+    for(auto &slot:m_readbacks)if(slot.fence&&SDL_QueryGPUFence(m_device,slot.fence)){
+        SDL_ReleaseGPUFence(m_device,slot.fence);slot.fence=nullptr;
+    }
+    for(auto &slot:m_readbacks)if(!slot.fence){
+        if(!slot.buffer){SDL_GPUTransferBufferCreateInfo info{};info.usage=SDL_GPU_TRANSFERBUFFERUSAGE_DOWNLOAD;info.size=bytes;slot.buffer=SDL_CreateGPUTransferBuffer(m_device,&info);}
+        if(slot.buffer)if(auto *cmd=SDL_AcquireGPUCommandBuffer(m_device)){
+            auto *pass=SDL_BeginGPUCopyPass(cmd);SDL_GPUTextureRegion region{};
+            region.texture=m_output;region.w=m_asyncWidth;region.h=m_asyncHeight;region.d=1;
+            SDL_GPUTextureTransferInfo to{};to.transfer_buffer=slot.buffer;to.pixels_per_row=m_asyncWidth;to.rows_per_layer=m_asyncHeight;
+            SDL_DownloadFromGPUTexture(pass,&region,&to);SDL_EndGPUCopyPass(pass);
+            slot.fence=SDL_SubmitGPUCommandBufferAndAcquireFence(cmd);slot.serial=++m_asyncSerial;
+        }
+        break;
+    }
+    // Prime the very first picture synchronously; subsequent ones consume completed transfers.
+    if(m_asyncPixels.empty())return ReadShown(pixels);
+    pixels=m_asyncPixels;return true;
 }
 
 SDL_FRect FitPicture(int width, int height, float columns, float lines, float aspect, int scaling, int shape) {

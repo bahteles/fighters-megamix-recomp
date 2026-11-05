@@ -34,6 +34,8 @@ public:
     // Takes the window's OpenGL (an OpenGL window, SDL_WINDOW_OPENGL); false with the reason
     bool Open(SDL_Window *window, std::string &error);
     void Close();
+    // Recreate the filter chain after a drawable/focus transition, retaining the preset.
+    void Refresh(){m_refreshPending=true;}
     // The preset to draw with (a .slangp file); false with the reason, and the one before is kept
     bool Load(const std::string &preset, std::string &error);
     const std::string &Preset() const {
@@ -63,6 +65,8 @@ private:
     uint32_t m_picture = 0, m_drawn = 0, m_readout = 0, m_pictureFrame = 0, m_drawnFrame = 0, m_readoutFrame = 0;
     int m_width = 0, m_height = 0, m_drawnWidth = 0, m_drawnHeight = 0;
     size_t m_frame = 0;
+    bool m_refreshPending=false;
+    std::string m_lastError;
     std::vector<uint32_t> m_last;
     int m_lastWidth = 0, m_lastHeight = 0;
     void Keep();

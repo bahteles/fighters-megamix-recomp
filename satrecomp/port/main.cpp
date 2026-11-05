@@ -118,7 +118,7 @@ static void RegisterPortFeatures() {
                              "Use replacement textures from the local ZIP selected in the launcher. Requires high resolution."});
 
     game.features.push_back({"display_framerate", "Display", "Frame rate",
-                             "Original keeps the original frame rate. 30 FPS limits display updates; 60 and 120 FPS smooth movement. "
+                             "Original keeps Saturn timing (about 59.8 Hz); repeated pictures do not become new animation frames. 30 FPS limits display updates; 60 and 120 FPS target smoother movement. "
                              "Game speed and audio stay original. Smoothing adds a small visual delay, requires high resolution, and disables run-ahead.",
                              0, {"Original", "30 FPS", "60 FPS", "120 FPS"}});
 

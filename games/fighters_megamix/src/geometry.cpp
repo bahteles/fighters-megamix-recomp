@@ -2,6 +2,7 @@
 // Observe the original vertex transforms; keep subpixel coordinates on the host only.
 #include "geometry.h"
 #include "geometry_math.h"
+#include "geometry_key.h"
 #include "game.h"
 #include "lift.h"
 #include <algorithm>
@@ -9,15 +10,15 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <map>
+#include <unordered_map>
 #include <mutex>
 
 namespace satrecomp {
 namespace {
 struct Position {double x,y; int ix,iy; bool valid=false;};
-using Key=std::array<int,11>;
+using Key=geometry::Key;
 struct Entry {std::array<float,8> xy;unsigned epoch;bool ambiguous=false;};
-std::map<Key,Entry> cache;
+std::unordered_map<Key,Entry,geometry::KeyHash> cache;
 std::mutex cacheMutex;
 unsigned epoch=0;unsigned long long queries=0,hits=0;
 bool Valid(uint32_t at,uint32_t size){return at>=0x06000000&&at<=0x06100000-size;}
@@ -30,9 +31,11 @@ bool Correct(const int (*points)[2],const uint16_t *command,float (*precise)[2])
     key[8]=(command[0]&15)==4?1:0;
     key[9]=key[8]?0:command[4]&(((command[2]>>3)&7)==5?~1:~0);
     key[10]=key[8]?0:command[5];
+    std::array<int,4> order;
+    key=geometry::Canonical(key,order);
     auto it=cache.find(key);
     if(it==cache.end()||it->second.ambiguous||epoch-it->second.epoch>2)return false;
-    for(int i=0;i<4;i++)for(int a=0;a<2;a++)precise[i][a]=it->second.xy[2*i+a];
+    for(int i=0;i<4;i++)for(int a=0;a<2;a++)precise[order[i]][a]=it->second.xy[2*i+a];
     ++hits;return true;
 }
 }
@@ -82,21 +85,30 @@ void ObserveGeometry(Guest &g){
         const int flat=(flags&7)==4?1:0;
         const int source=flat?0:g.Read16(attr+4)&(((mode>>3)&7)==5?~1:~0);
         const int size=flat?0:g.Read16(attr+6);
-        // Preserve correspondence even if the command builder rotates/reverses a face.
-        for(int reversed=0;reversed<2;reversed++)for(int start=0;start<4;start++){
-            Key key{};Entry entry{};entry.epoch=epoch;
-            for(int c=0;c<4;c++){
-                const auto &p=projected[ids[(start+(reversed?4-c:c))%4]];
-                key[c*2]=p.ix;key[c*2+1]=p.iy;entry.xy[c*2]=float(p.x);entry.xy[c*2+1]=float(p.y);
-            }
-            key[8]=flat;key[9]=source;key[10]=size;
-            auto it=cache.find(key);
-            if(it!=cache.end()&&it->second.epoch==epoch){
-                for(int c=0;c<8;c++)if(std::abs(it->second.xy[c]-entry.xy[c])>.125f)entry.ambiguous=true;
-                entry.ambiguous|=it->second.ambiguous;
-            }
-            cache[key]=entry;
+        Key raw{};Entry entry{};entry.epoch=epoch;
+        for(int c=0;c<4;c++){const auto &p=projected[ids[c]];raw[2*c]=p.ix;raw[2*c+1]=p.iy;}
+        raw[8]=flat;raw[9]=source;raw[10]=size;
+        std::array<int,4> order;Key key=geometry::Canonical(raw,order);
+        for(int c=0;c<4;c++){
+            const auto &p=projected[ids[order[c]]];entry.xy[2*c]=float(p.x);entry.xy[2*c+1]=float(p.y);
+
         }
+        // Reject only genuinely ambiguous full-face correspondences, not ordinary
+        // triangular faces whose final corner repeats the previous vertex.
+        for(int reverse=0;reverse<2;reverse++)for(int start=0;start<4;start++){
+            bool same=true;
+            for(int c=0;c<4;c++){int i=(start+(reverse?4-c:c))%4;if(raw[2*i]!=key[2*c]||raw[2*i+1]!=key[2*c+1])same=false;}
+            if(same)for(int c=0;c<4;c++){
+                const auto &p=projected[ids[(start+(reverse?4-c:c))%4]];
+                if(std::abs(float(p.x)-entry.xy[2*c])>.125f||std::abs(float(p.y)-entry.xy[2*c+1])>.125f)entry.ambiguous=true;
+            }
+        }
+        auto it=cache.find(key);
+        if(it!=cache.end()&&it->second.epoch==epoch){
+            for(int c=0;c<8;c++)if(std::abs(it->second.xy[c]-entry.xy[c])>.125f)entry.ambiguous=true;
+            entry.ambiguous|=it->second.ambiguous;
+        }
+        cache[key]=entry;
     }
 }
 void RegisterGeometry(){

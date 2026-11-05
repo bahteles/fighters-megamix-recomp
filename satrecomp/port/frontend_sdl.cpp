@@ -141,6 +141,8 @@ int RunWindowed(Port &port) {
         }
         flags |= SDL_WINDOW_RESIZABLE | (port.gpu || shade ? SDL_WINDOW_HIGH_PIXEL_DENSITY : 0) | (shade ? SDL_WINDOW_OPENGL : 0) |
                  (testHidden ? SDL_WINDOW_HIDDEN : 0);
+        if(satrecomp::FeatureOn("borderless_window"))flags&=~SDL_WINDOW_FULLSCREEN;
+        SDL_SetHint(SDL_HINT_VIDEO_MINIMIZE_ON_FOCUS_LOSS,"0");
         window = SDL_CreateWindow("satrecomp", width, height, flags);
         if (!window) {
             fprintf(stderr, "SDL window: %s\n", SDL_GetError());
@@ -229,6 +231,8 @@ int RunWindowed(Port &port) {
             SDL_SetWindowFullscreen(window, port.opt.fullscreen);
         }
         borderless = wanted;
+        if(testLog)fprintf(stderr,"window mode: borderless=%d fullscreen=%d\n",int(borderless),int(bool(SDL_GetWindowFlags(window)&SDL_WINDOW_FULLSCREEN)));
+        if(shaded)shading.Refresh();
     };
     updateBorderless();
     if (port.gpu) {
@@ -451,6 +455,10 @@ int RunWindowed(Port &port) {
                     if (!openWindow(wide, high, full)) {
                         break;
                     }
+                    if(satrecomp::FeatureOn("borderless_window")){
+                        const SDL_Rect savedBounds=windowedBounds;
+                        borderless=false;updateBorderless();windowedBounds=savedBounds;
+                    }
                     shownSerial = 0;
                     menuDirty = true;
                 }
@@ -466,7 +474,10 @@ int RunWindowed(Port &port) {
             } kKeys[] = {{"ESC", SDL_SCANCODE_ESCAPE}, {"MINUS", SDL_SCANCODE_MINUS}, {"EQUALS", SDL_SCANCODE_EQUALS}, {"F1", SDL_SCANCODE_F1}, {"F2", SDL_SCANCODE_F2},
                          {"F3", SDL_SCANCODE_F3},  {"F4", SDL_SCANCODE_F4},       {"F5", SDL_SCANCODE_F5},         {"F6", SDL_SCANCODE_F6}, {"F7", SDL_SCANCODE_F7},
                          {"F8", SDL_SCANCODE_F8},  {"F9", SDL_SCANCODE_F9},       {"F10", SDL_SCANCODE_F10},       {"F11", SDL_SCANCODE_F11}, {"F12", SDL_SCANCODE_F12}};
-            if (step.what == "QUIT") {
+            if(step.what=="FOCUS_LOST"||step.what=="FOCUS_GAINED"||step.what=="RESTORED"){
+                SDL_Event event{};event.type=step.what=="FOCUS_LOST"?SDL_EVENT_WINDOW_FOCUS_LOST:step.what=="FOCUS_GAINED"?SDL_EVENT_WINDOW_FOCUS_GAINED:SDL_EVENT_WINDOW_RESTORED;
+                event.window.windowID=SDL_GetWindowID(window);SDL_PushEvent(&event);
+            } else if (step.what == "QUIT") {
                 running = false;
             } else if (step.what.rfind("FEATURE=", 0) == 0) {
                 const size_t equals = step.what.find('=', 8);
@@ -496,6 +507,7 @@ int RunWindowed(Port &port) {
             const std::string now = std::string(port.menu.IsOpen() ? "menu" : paused ? "stopped" : "running") + " speed " + std::to_string(port.menu.Speed()) + " slot " +
                                     std::to_string(port.menu.Slot()) + " note \"" + noteShown + "\"";
             if (now != logged || (port.frame % 60 == 0 && port.frame != loggedFrame)) {
+                if(port.gpu)fprintf(stderr,"source3d: simulation=%llu pictures=%llu crt_outputs=%llu\n",static_cast<unsigned long long>(port.frame),static_cast<unsigned long long>(port.gpu->SourcePictures()),static_cast<unsigned long long>(port.gpu->AsyncPictures()));
                 logged = now;
                 loggedFrame = port.frame;
                 fprintf(stderr, "window: pass %llu frame %llu at %.0f ms: %s\n", static_cast<unsigned long long>(pass), static_cast<unsigned long long>(port.frame),
@@ -547,9 +559,26 @@ int RunWindowed(Port &port) {
                     }
                 } else if (ev.key.scancode == SDL_SCANCODE_F11 ||
                            (ev.key.scancode == SDL_SCANCODE_RETURN && (ev.key.mod & SDL_KMOD_ALT))) {
-                    const bool fs = SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN;
-                    SDL_SetWindowFullscreen(window, !fs);
+                    if(borderless){
+                        satrecomp::SetFeature("borderless_window",false);
+                        updateBorderless();
+                    }else{
+                        const bool fs = SDL_GetWindowFlags(window) & SDL_WINDOW_FULLSCREEN;
+                        SDL_SetWindowFullscreen(window, !fs);
+                        if(shaded)shading.Refresh();
+                    }
                 }
+                break;
+            case SDL_EVENT_WINDOW_FOCUS_GAINED:
+            case SDL_EVENT_WINDOW_RESTORED:
+            case SDL_EVENT_WINDOW_PIXEL_SIZE_CHANGED:
+            case SDL_EVENT_WINDOW_DISPLAY_CHANGED:
+                if(ev.window.windowID==SDL_GetWindowID(window)&&shaded)shading.Refresh();
+                break;
+            case SDL_EVENT_WINDOW_FOCUS_LOST:
+                // Keep a borderless window composited when another application is activated.
+                if(ev.window.windowID==SDL_GetWindowID(window)&&borderless&&
+                   (SDL_GetWindowFlags(window)&SDL_WINDOW_FULLSCREEN))SDL_SetWindowFullscreen(window,false);
                 break;
             case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
                 if (ButtonBound(ev.gbutton.button)) {
@@ -777,7 +806,8 @@ int RunWindowed(Port &port) {
             if (shaded) {
                 // (the picture at the Saturn's own size, with the readout, read back and drawn through the preset)
                 port.gpu->SizeFor(0, 0);
-                if (port.gpu->ReadShown(shadedPixels)) {
+                const bool smooth=satrecomp::FeatureValue("display_framerate")>=2&&!paused;
+                if (smooth?port.gpu->ReadShownAsync(shadedPixels):port.gpu->ReadShown(shadedPixels)) {
                     showShaded(shadedPixels.data(), port.gpu->OutputWidth(), port.gpu->OutputHeight(), true);
                 }
             } else {

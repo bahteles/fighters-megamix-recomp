@@ -36,3 +36,7 @@ c++ -std=c++20 -I games/fighters_megamix/src tools/test_geometry_math.cpp -o tes
 ```
 
 No disc data, generated game code, extracted models or texture packs are included.
+
+The host cache stores one canonical record for each face rather than eight rotated/reversed copies.
+Lookup restores the original corner correspondence and still rejects ambiguous geometry. The
+matching key includes texture identity, and CRC-indexed HD lookups always verify original bytes.

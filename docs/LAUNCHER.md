@@ -80,3 +80,12 @@ Delete it to start over. Your disc image is only ever read.
 The first time, if your user folder already has them, the launcher offers to copy them over; nothing is taken from
 your user folder. Take `portable.txt` away and the launcher uses your user folder again; nothing is moved either way.
 The folder has to be one you can write to, or the launcher says so.
+
+## Borderless windows and CRT recovery
+
+Borderless display remains a desktop window and does not enter native fullscreen when F11 leaves
+borderless mode. Switching between filtered and unfiltered display reapplies the window mode.
+The window is not automatically minimized when focus moves elsewhere. Filter chains refresh
+after focus/restore/drawable transitions. If a shader frame fails, the original
+picture is displayed for that frame instead of presenting an empty black image. Explicitly minimized
+windows skip OpenGL presentation until they are restored.
