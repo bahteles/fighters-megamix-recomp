@@ -12,6 +12,8 @@ The original authors retain their credits. The GPL-3.0 license and third-party n
 
 - **Frame rate selection**: Original / 30 / 60 / 120 FPS, with experimental polygon interpolation at 60/120 and the original simulation/audio clock. See [frame rate settings](docs/FRAMERATE.md).
 
+- **Geometry correction**: optional higher-precision polygon positions to reduce wobble without changing game speed or audio.
+
 ## Local modifications
 
 - Additional sound mailbox wait time after returning to fighter selection.

@@ -2,6 +2,7 @@
 // Experimental model gallery. Geometry is observed at Megamix's vertex transform;
 // the original routine still runs unchanged. Nothing is written to guest memory.
 #include "gallery.h"
+#include "geometry.h"
 #include "gallery_theme.h"
 #include "gallery_raster.h"
 #include "game.h"
@@ -98,6 +99,7 @@ uint32_t Color(uint16_t value) {
     return expand(value&31)|(expand((value>>5)&31)<<8)|(expand((value>>10)&31)<<16)|0xff000000;
 }
 bool Capture(Guest &g) {
+    satrecomp::ObserveGeometry(g);
     if (!capturing) return false;
     uint32_t data=g.R(4), matrix=g.R(6);
     if (!Valid(data,24)||!Valid(matrix,48))return false;

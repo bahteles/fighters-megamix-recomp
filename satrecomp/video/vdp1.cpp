@@ -10,6 +10,7 @@
 // Not done: the drawing modes that read what is already in the framebuffer (shadow, half transparency, MSB
 // on), end codes cutting a line short, and the exact choice of texture columns when shrinking.
 #include "renderer.h"
+#include "../runtime/game.h"
 
 #include <algorithm>
 #include <cmath>
@@ -41,18 +42,28 @@ void Renderer::Vdp1AddQuad(const Command &cmd, const int corners[4][2], uint16 f
     Quad &quad = m_frame.quads.emplace_back();
     // The corners are pixels the hardware draws: the quad reaches half a pixel beyond their centres, away from
     // its middle
+    float precise[4][2];
+    for(int i=0;i<4;i++){precise[i][0]=float(corners[i][0]);precise[i][1]=float(corners[i][1]);}
+    const unsigned type=cmd.words[0]&15;
+    if((type==2||type==3||type==4)&&satrecomp::TheGame().preciseQuad){
+        int local[4][2];float corrected[4][2];
+        for(int i=0;i<4;i++){local[i][0]=corners[i][0]-ctx.localCoordX;local[i][1]=corners[i][1]-ctx.localCoordY;}
+        if(satrecomp::TheGame().preciseQuad(local,cmd.words,corrected))for(int i=0;i<4;i++){
+            precise[i][0]=corrected[i][0]+ctx.localCoordX;precise[i][1]=corrected[i][1]+ctx.localCoordY;
+        }
+    }
     float cx = 0, cy = 0;
     for (int i = 0; i < 4; i++) {
-        cx += corners[i][0] * 0.25f;
-        cy += corners[i][1] * 0.25f;
+        cx += precise[i][0] * 0.25f;
+        cy += precise[i][1] * 0.25f;
     }
     static const float kSideX[4] = {-1, 1, 1, -1}, kSideY[4] = {-1, -1, 1, 1};
     for (int i = 0; i < 4; i++) {
-        const float dx = corners[i][0] - cx, dy = corners[i][1] - cy;
+        const float dx = precise[i][0] - cx, dy = precise[i][1] - cy;
         const float sx = std::fabs(dx) < 0.01f ? kSideX[i] : (dx < 0 ? -1.0f : 1.0f);
         const float sy = std::fabs(dy) < 0.01f ? kSideY[i] : (dy < 0 ? -1.0f : 1.0f);
-        quad.corner[i][0] = corners[i][0] + 0.5f + 0.5f * sx;
-        quad.corner[i][1] = corners[i][1] + 0.5f + 0.5f * sy;
+        quad.corner[i][0] = precise[i][0] + 0.5f + 0.5f * sx;
+        quad.corner[i][1] = precise[i][1] + 0.5f + 0.5f * sy;
     }
     Vdp1FinishQuad(quad, cmd, flags, gouraud);
     int lines = 0;

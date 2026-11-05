@@ -34,6 +34,7 @@ share (file loading, CD music, the controllers) are replaced by the same C++ in 
 
 **[More about the picture →](docs/PICTURE.md)**
 
+- **Geometry correction**: optional subpixel precision to reduce polygon wobble ([details](docs/GEOMETRY.md)).
 - **Frame rate options**: Original, 30, 60 or 120 FPS, with experimental motion interpolation at 60/120 FPS ([details](docs/FRAMERATE.md)).
 
 ## Gallery mode

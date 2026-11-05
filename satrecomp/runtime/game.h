@@ -73,6 +73,8 @@ struct Game {
     std::function<bool(int, int, const uint32_t *, std::vector<uint32_t> &)> modelHdTexture;
     std::function<bool(bool)> setModelHdTextures;
     bool modalQuit = false;
+    // Optional host-only subpixel coordinates for a complete distorted sprite/polygon.
+    bool (*preciseQuad)(const int (*)[2], const uint16_t *, float (*)[2]) = nullptr;
     std::vector<Feature> features;
     // With saveUnlocks.feature on, the backup library (hle_bios.cpp) gives the game its save file with these
     // fields raised, and takes out again what it added when the game writes the file: the game sees all it
