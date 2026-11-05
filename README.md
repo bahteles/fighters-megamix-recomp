@@ -39,7 +39,7 @@ share (file loading, CD music, the controllers) are replaced by the same C++ in 
 Browse the 32 fighters in the in-game **Gallery**, with rotation, zoom, original color variants,
 and full or broken armor where available. Optional HD textures and CRT filters are supported.
 
-![Gallery mode showing Grace with an alternate color, broken armor and HD textures](docs/screenshots/gallery.png)
+![Gallery mode showing Bahn in full armor with character, view, armor and color controls](docs/screenshots/gallery.png)
 
 Gallery models, interface artwork and the optional texture pack are local resources and are not
 included in this repository. See [Gallery setup and controls](docs/GALLERY.md).
