@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Copyright (C) 2026 Tommy McLeroy. Part of satrecomp: https://github.com/tmcleroy/satrecomp
 #include "gpu.h"
+#include "interpolation.h"
 
 #include <algorithm>
 #include <cmath>
@@ -917,6 +918,26 @@ void Gpu::RedrawFrozenFrame() {
     m_redrawing = false;
 }
 
+void Gpu::SetInterpolation(bool enabled) {
+    if (m_interpolationEnabled == enabled) return;
+    m_interpolationEnabled = enabled;
+    m_previousQuads.clear();
+    m_pictureAge = 0;
+    m_pictureInterval = 1;
+}
+
+bool Gpu::DrawInterpolated(float fraction) {
+    if (!m_interpolationEnabled || m_previousQuads.empty()) return false;
+    const float alpha = std::clamp((m_pictureAge + fraction) / m_pictureInterval, 0.f, 1.f);
+    auto quads = m_frozenFrame.quads;
+    if (!InterpolateQuads(m_previousQuads,quads,alpha)) return false;
+    m_frozenFrame.quads.swap(quads);
+    RedrawFrozenFrame();
+    m_frozenFrame.quads.swap(quads);
+    ++m_interpolatedPictures;
+    return true;
+}
+
 void Gpu::Draw(const Frame &frame) {
     if (!m_device || !frame.width || !frame.height || !Prepare(frame)) {
         return;
@@ -925,9 +946,27 @@ void Gpu::Draw(const Frame &frame) {
         if (frame.resetSprites) {
             m_pendingSprites = {};
             m_displaySprites = {};
+            m_previousQuads.clear();
+            m_pictureAge = 0;
         }
+        if (m_frozenFrame.width != frame.width || m_frozenFrame.height != frame.height ||
+            m_frozenFrame.spriteWidth != frame.spriteWidth || m_frozenFrame.spriteHeight != frame.spriteHeight) {
+            m_previousQuads.clear(); m_pictureAge=0;
+        }
+        ++m_pictureAge;
         for (const auto &event : frame.events) {
             if (event.kind == Vdp1Event::Kind::Swap) {
+                const bool samePicture = m_displaySprites.quads.size() == m_pendingSprites.quads.size() &&
+                    std::equal(m_displaySprites.quads.begin(), m_displaySprites.quads.end(), m_pendingSprites.quads.begin(),
+                        [](const Quad &a, const Quad &b) {
+                            return a.texture == b.texture && a.color == b.color && a.mode == b.mode && a.flags == b.flags &&
+                                a.width == b.width && a.height == b.height && !std::memcmp(a.corner,b.corner,sizeof(a.corner));
+                        });
+                if (m_interpolationEnabled && !samePicture && !m_displaySprites.quads.empty()) {
+                    m_previousQuads = m_displaySprites.quads;
+                    m_pictureInterval = std::clamp(m_pictureAge, 1u, 4u);
+                    m_pictureAge = 0;
+                }
                 m_displaySprites = m_pendingSprites;
             } else if (event.kind == Vdp1Event::Kind::Draw) {
                 m_pendingSprites = frame;

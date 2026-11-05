@@ -10,6 +10,8 @@ The original authors retain their credits. The GPL-3.0 license and third-party n
 - **HD texture pack support** through an optional local ZIP selected in the launcher; packs are supplied separately.
 - **In-game model Gallery** with rotation, zoom, color variants and armor options.
 
+- **Frame rate selection**: Original / 30 / 60 / 120 FPS, with experimental polygon interpolation at 60/120 and the original simulation/audio clock. See [frame rate settings](docs/FRAMERATE.md).
+
 ## Local modifications
 
 - Additional sound mailbox wait time after returning to fighter selection.

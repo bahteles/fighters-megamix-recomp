@@ -34,6 +34,8 @@ share (file loading, CD music, the controllers) are replaced by the same C++ in 
 
 **[More about the picture →](docs/PICTURE.md)**
 
+- **Frame rate options**: Original, 30, 60 or 120 FPS, with experimental motion interpolation at 60/120 FPS ([details](docs/FRAMERATE.md)).
+
 ## Gallery mode
 
 Browse the 32 fighters in the in-game **Gallery**, with rotation, zoom, original color variants,

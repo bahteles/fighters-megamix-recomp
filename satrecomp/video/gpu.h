@@ -43,6 +43,10 @@ public:
     // Does a frame's VDP1 work and makes the picture, in Output()
     void Draw(const Frame &frame);
     void RedrawFrozenFrame();
+    // Re-render compatible polygon positions between two source pictures, without advancing the machine.
+    bool DrawInterpolated(float fraction);
+    void SetInterpolation(bool enabled);
+    uint64_t InterpolatedPictures() const { return m_interpolatedPictures; }
     void SetUiContours(bool enabled) { m_uiContours = enabled; }
     void SetHdTexturePack(bool enabled);
     bool HdTexturePackEnabled() const { return m_hdEnabled; }
@@ -180,6 +184,10 @@ private:
     std::vector<uint8_t> m_frozenWindow, m_frozenVram2;
     std::vector<float> m_frozenFloorLines, m_frozenBackgroundLines;
     bool m_redrawing = false;
+    bool m_interpolationEnabled = false;
+    std::vector<Quad> m_previousQuads;
+    uint32_t m_pictureAge = 0, m_pictureInterval = 1;
+    uint64_t m_interpolatedPictures = 0;
     bool MatchesHdText(const Frame &frame, const HdText &text) const;
     bool m_hdEnabled = false, m_hdAttempted = false;
     bool LoadHdTexturePack();

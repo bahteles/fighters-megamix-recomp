@@ -412,6 +412,8 @@ int RunWindowed(Port &port) {
 
     const double kFrameNs = 1e9 / 59.8261; // NTSC Saturn field rate
     uint64_t nextFrame = SDL_GetTicksNS();
+    double nextSimulation = 0;
+    int previousRate = -1;
     bool running = true;
     uint64_t pass = 0, loggedFrame = ~0ull;
     const uint64_t startedAt = SDL_GetTicksNS();
@@ -696,6 +698,7 @@ int RunWindowed(Port &port) {
             }
             SDL_Delay(8);
             nextFrame = SDL_GetTicksNS();
+            nextSimulation = double(nextFrame);
             continue;
         }
         if (port.gpu) {
@@ -714,9 +717,29 @@ int RunWindowed(Port &port) {
         stepFrame = false;
         if (runs) {
             port.stepping = paused; // (a frame at a time: no run-ahead)
-            port.RunFrame();
+            const int rate = std::clamp(satrecomp::FeatureValue("display_framerate"), 0, 3);
+            const double now = double(SDL_GetTicksNS());
+            const double step = kFrameNs * 100 / port.menu.Speed();
+            if (rate != previousRate || now - nextSimulation > 100'000'000.0 || paused) {
+                nextSimulation = now;
+                nextFrame = uint64_t(now);
+                if (port.gpu) port.gpu->SetInterpolation(false);
+            }
+            previousRate = rate;
+            if (port.gpu) port.gpu->SetInterpolation(rate >= 2 && !paused && !port.opt.unthrottled);
+            if (!rate || paused || port.opt.unthrottled) {
+                port.RunFrame();
+                nextSimulation = now + step;
+            } else {
+                // Only the fixed Saturn clock advances game state and audio. Presentation is independent.
+                while (nextSimulation <= now && !port.quit && (!port.opt.frames || port.frame < port.opt.frames)) {
+                    port.RunFrame();
+                    nextSimulation += step;
+                }
+            }
         } else {
             audio.pending.clear();
+            nextSimulation = double(SDL_GetTicksNS());
         }
         if (port.menu.Speed() != 100) {
             audio.pending.clear(); // (no sound in slow motion)
@@ -741,6 +764,13 @@ int RunWindowed(Port &port) {
                     int windowW = 0, windowH = 0;
                     SDL_GetWindowSize(window, &windowW, &windowH);
                     SDL_SetWindowSize(window, static_cast<int>(static_cast<float>(windowH) * shownAspect + 0.5f), windowH);
+                }
+            }
+            if (runs && satrecomp::FeatureValue("display_framerate") >= 2 && !port.opt.unthrottled && !paused) {
+                const double step = kFrameNs * 100 / port.menu.Speed();
+                const float fraction = float(std::clamp((double(SDL_GetTicksNS()) - (nextSimulation - step)) / step, 0.0, 1.0));
+                if (port.gpu->DrawInterpolated(fraction) && getenv("SATRECOMP_INTERPOLATION_LOG")) {
+                    fprintf(stderr,"interpolation: frame=%llu fraction=%.4f\n",static_cast<unsigned long long>(port.frame),fraction);
                 }
             }
             port.UpdateHud(); // (the note may have changed while the game stands still)
@@ -785,7 +815,9 @@ int RunWindowed(Port &port) {
         }
 
         if (!port.opt.unthrottled) {
-            nextFrame += static_cast<uint64_t>(kFrameNs * 100 / port.menu.Speed());
+            const int rate = std::clamp(satrecomp::FeatureValue("display_framerate"), 0, 3);
+            const double rates[] = {59.8261, 30, 60, 120};
+            nextFrame += static_cast<uint64_t>(1e9 / rates[rate] * 100 / port.menu.Speed());
             const uint64_t now = SDL_GetTicksNS();
             if (now < nextFrame) {
                 SDL_DelayPrecise(nextFrame - now);
@@ -795,6 +827,7 @@ int RunWindowed(Port &port) {
         }
     }
 
+    if (port.gpu && getenv("SATRECOMP_WINDOW_LOG")) fprintf(stderr,"Interpolated pictures: %llu\n",static_cast<unsigned long long>(port.gpu->InterpolatedPictures()));
     port.audioSink = nullptr;
     satrecomp::TheGame().presentModal={};
     satrecomp::TheGame().modelHdTexture={};

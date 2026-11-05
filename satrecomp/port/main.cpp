@@ -117,6 +117,11 @@ static void RegisterPortFeatures() {
     game.features.push_back({"hd_texture_pack", "Display", "HD Texture Pack",
                              "Use replacement textures from the local ZIP selected in the launcher. Requires high resolution."});
 
+    game.features.push_back({"display_framerate", "Display", "Frame rate",
+                             "Original keeps the original frame rate. 30 FPS limits display updates; 60 and 120 FPS smooth movement. "
+                             "Game speed and audio stay original. Smoothing adds a small visual delay, requires high resolution, and disables run-ahead.",
+                             0, {"Original", "30 FPS", "60 FPS", "120 FPS"}});
+
     game.features.push_back({"display_scaling", "Display", "Scaling",
                              "Sharp: as large as fits. Whole pixels: as tall as a whole number of the Saturn's lines fits, "
                              "a border round it. Smooth: with high resolution off, the Saturn's picture softened up to the "
@@ -912,7 +917,7 @@ namespace {
 } // namespace
 
 void Port::RunAhead() {
-    const int ahead = satrecomp::FeatureValue("run_ahead");
+    const int ahead = satrecomp::FeatureValue("display_framerate") >= 2 ? 0 : satrecomp::FeatureValue("run_ahead");
     // (nor while going on a frame at a time or slowed: there the frame shown is the frame)
     if (ahead <= 0 || stepping || menu.Speed() != 100 || !videoRenderer ||
         (satrecomp::TheGame().noRunAhead && satrecomp::TheGame().noRunAhead())) {
