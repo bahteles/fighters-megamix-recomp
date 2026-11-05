@@ -245,6 +245,7 @@ void Show(){
         bool full=armorFull||variant.broken.empty();
         if(LoadModel(full?variant.path:variant.broken)){colorIndex=next;armorFull=full;upload();}
     };
+    constexpr float characterY=148,rotateY=234,wireY=298,armorY=384,colorY=470;
     auto fill=[&](float x,float y,float w,float h,int r,int g,int b){SDL_SetRenderDrawColor(renderer,r,g,b,255);SDL_FRect rect{x,y,w,h};SDL_RenderFillRect(renderer,&rect);};
     std::vector<SDL_Keycode> variantTest;
     if(const char *test=getenv("FMM_GALLERY_TEST");test&&std::string(test)=="all_variants"&&catalogMode){
@@ -335,15 +336,19 @@ void Show(){
                 if(e.button.x<360&&e.button.button==SDL_BUTTON_LEFT){
                     float y=e.button.y;
                     if(y>=655){running=false;continue;}
-                    if(y>=104&&y<174&&catalogMode){picker=true;pickCursor=selected;}
-                    if(y>=182&&y<226){
-                        if(catalogMode)change(e.button.x<166?-1:1);
-                        else{selected=e.button.x<166?0:1;reset();}
+                    float x=e.button.x;
+                    auto hit=[&](float left,float top,float width){return x>=left&&x<left+width&&y>=top&&y<top+38;};
+                    if(hit(170,characterY,82))change(-1);
+                    if(hit(262,characterY,76))change(1);
+                    if(hit(170,rotateY,76))spin=true;
+                    if(hit(262,rotateY,76))spin=false;
+                    if(hit(170,wireY,76))wire=true;
+                    if(hit(262,wireY,76))wire=false;
+                    if(hit(170,armorY,82)&&!armorFull)armor();
+                    if(hit(262,armorY,76)&&armorFull)armor();
+                    if(catalogMode)for(size_t i=0;i<catalog[selected].colors.size();i++){
+                        if(hit(170+(i%3)*56,colorY+(i/3)*48,48))color(int(i)-colorIndex);
                     }
-                    if(y>=302&&y<340)spin=!spin;
-                    if(y>=346&&y<384)wire=!wire;
-                    if(y>=450&&y<492)armor();
-                    if(y>=580&&y<620)color(1);
                 }else{drag=e.button.button==SDL_BUTTON_LEFT;pan=e.button.button==SDL_BUTTON_RIGHT;}
             }
             if(e.type==SDL_EVENT_MOUSE_BUTTON_UP){if(e.button.button==SDL_BUTTON_LEFT)drag=false;if(e.button.button==SDL_BUTTON_RIGHT)pan=false;}
@@ -408,40 +413,34 @@ void Show(){
         SDL_SetRenderClipRect(renderer,nullptr);
         theme.Header("GALLERY",width);
         const std::string name=catalogMode?catalog[selected].name:(selected?"Player 2":"Player 1");
-        theme.Text("serif","Character: "+name,32,110,34,310);
-        if(catalogMode){
-            char counter[16];snprintf(counter,sizeof(counter),"%02d / 32",selected+1);
-            theme.Text("ui",counter,32,158,14,90);
-            theme.Text("ui","C: Select character",128,158,14,220);
-        }
-        theme.Text("ui","Previous",34,194,22,125);
-        theme.Text("ui","|",162,194,22,12);
-        theme.Text("ui","Next",185,194,22,125);
-        theme.Text("gold","View",32,254,26,300);
-        theme.Text("ui","Auto-Rotate",34,312,22,222);
-        theme.Text("ui",spin?"On":"Off",282,312,22,65);
-        theme.Text("ui","Wireframe",34,356,22,222);
-        theme.Text("ui",wire?"On":"Off",282,356,22,65);
-        theme.Text("gold","Armor",32,414,26,300);
-        if(catalogMode&&!catalog[selected].colors[colorIndex].broken.empty()){
-            theme.Text("ui",armorFull?"Full":"Broken",34,460,22,300);
-            theme.Text("ui","A: Change armor",34,500,13,300);
-        }else theme.Text("ui","Not applicable",34,460,22,310);
-        theme.Text("gold","Color",32,542,26,300);
-        if(catalogMode&&catalog[selected].colors.size()>1){
-            char label[40];snprintf(label,sizeof(label),"%d / %zu",colorIndex+1,catalog[selected].colors.size());
-            theme.Text("ui",label,34,590,22,300);
-            theme.Text("ui","V / B: Next / Previous",34,628,13,300);
-        }else theme.Text("ui","Original",34,590,22,300);
+        auto button=[&](const std::string &label,float x,float y,float w,bool active=false){
+            fill(x,y,w,38,active?30:5,active?43:12,active?112:65);
+            SDL_SetRenderDrawColor(renderer,active?245:104,active?206:119,active?87:178,255);
+            SDL_FRect rect{x,y,w,38};SDL_RenderRect(renderer,&rect);
+            theme.Text(active?"choice":"ui",label,x+w/2,y+10,18,w-14,true);
+        };
+        theme.Text("gold","Character",32,characterY+8,23,130);
+        button("Previous",170,characterY,82);
+        button("Next",262,characterY,76);
+        theme.Text("gold","Auto-Rotate",32,rotateY+8,23,130);
+        button("On",170,rotateY,76,spin);button("Off",262,rotateY,76,!spin);
+        theme.Text("gold","Wireframe",32,wireY+8,23,130);
+        button("On",170,wireY,76,wire);button("Off",262,wireY,76,!wire);
+        theme.Text("gold","Armor",32,armorY+8,23,130);
+        const bool hasArmor=catalogMode&&!catalog[selected].colors[colorIndex].broken.empty();
+        button("Default",170,armorY,82,armorFull);
+        if(hasArmor)button("Broken",262,armorY,76,!armorFull);
+        theme.Text("gold","Color",32,colorY+8,23,130);
+        const size_t colors=catalogMode?catalog[selected].colors.size():1;
+        for(size_t i=0;i<colors;i++)button(std::string(1,char('A'+i)),170+(i%3)*56,colorY+(i/3)*48,48,int(i)==colorIndex);
         theme.Text("serif",name,side+viewWidth/2,102,39,viewWidth-90,true);
-        theme.Text(hd?"warm":"serif",hd?"HD":"SD",width-90,107,28,70);
         // The same blue strip and silver rule frame the controls as the title.
         fill(0,height-65,width,65,0,0,65);
         fill(16,height-66,width-32,1,156,156,213);
         theme.Text("ui","Mode Select",32,height-48,22,300);
         theme.Text("ui","Esc: Back",34,height-19,11,270);
         theme.Text("plain","DRAG: ROTATE     WHEEL: ZOOM     RIGHT DRAG: PAN",390,height-51,16,width-420);
-        theme.Text("plain","TAB: NEXT     SPACE: AUTO ROTATE     F10: SD / HD",390,height-24,15,width-420);
+        theme.Text("ui","Tab: Next   Space: Auto-rotate   C: Characters",390,height-24,15,width-420);
         if(picker){
             theme.Background(width,height);
             theme.Header("SELECT CHARACTER",width);

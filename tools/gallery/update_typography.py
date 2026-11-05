@@ -40,11 +40,14 @@ def update(theme, serif_path, sans_path):
     for name in names:
         if name not in excluded and not name.startswith('Character:') and ' / ' not in name:
             text('serif','Character: '+name,serif)
-    for label in ['View','Armor','Color']:text('gold',label,serif,True)
+    for label in ['Character','Auto-Rotate','Wireframe','Armor','Color']:text('gold',label,serif,True)
     labels=['Previous','Next','|','Auto-Rotate','Wireframe','On','Off','Full','Broken','Not applicable','Original','Mode Select','Esc: Back','C: Select character','A: Change armor','V / B: Next / Previous']
     labels+=['%02d / 32'%i for i in range(1,33)]
     labels += ['%d / %d'%(i,n) for n in range(1,9) for i in range(1,n+1)]
-    for label in labels:text('ui',label,sans)
+    labels+=['Default','A','B','C','D','E','F','G','H','Tab: Next   Space: Auto-rotate   C: Characters']
+    for label in labels:
+        text('ui',label,sans)
+        text('choice',label,sans,True)
     if len(assets)>512:raise ValueError('Too many theme entries')
     result=bytearray(b'FMMGUI02'+struct.pack('<I',len(assets)))
     for name,(width,height,pixels) in assets.items():

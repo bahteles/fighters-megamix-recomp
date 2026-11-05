@@ -29,7 +29,7 @@ variant. Model references must be filenames within the catalog folder.
 
 ## Controls
 
-Rotate and zoom the model using the on-screen controls. Use **V/B**, the **COLOR** control, or
+Rotate and zoom the model using the on-screen controls. Use **V/B**, the **Color** buttons, or
 left/right on a controller to switch colors. **A** switches armor states where available.
 The Gallery also supports switching the optional HD textures without changing the model catalog.
 
@@ -41,7 +41,9 @@ archives; `tools/audit.sh` also rejects their formats among tracked files.
 
 ## Updating the local typography
 
-The Gallery uses a large character title, gold section headings, and smaller sans-serif settings.
+The character name appears once above the model. Settings use compact option buttons, with
+the active choice highlighted in gold. Colors use lettered buttons (A, B, C, and so on).
+The interface does not display an SD/HD badge or texture-pack shortcut hint.
 After updating the executable, update an existing local theme using Python and Pillow:
 
 ```sh
