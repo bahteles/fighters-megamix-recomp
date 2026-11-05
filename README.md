@@ -1,5 +1,6 @@
 > **Community fork maintained by bahteles.** Based on Tommy McLeroy's Fighters Megamix recompilation.
-> This fork contains custom fixes and optional texture replacement support. See [COMMUNITY.md](COMMUNITY.md).
+> **Features:** full 16:9 support, SFX bug fixes, optional HD texture pack support, and an in-game model Gallery.
+> Texture packs are supplied separately and are not included in this repository. See [COMMUNITY.md](COMMUNITY.md).
 
 # Fighters Megamix Recomp
 
@@ -23,8 +24,7 @@ share (file loading, CD music, the controllers) are replaced by the same C++ in 
 ## The picture
 
 - **High resolution**: polygons drawn by your graphics card at the window's resolution, not the Saturn's.
-- **Widescreen**: 16:9, with more of the arena at the sides. It works in the fights seen so far; the other screens
-  have not been checked in it.
+- **Full 16:9 support**: widescreen fights, menus, victory screens and credits, with aspect-aware Gallery presentation.
 - **The display your way**: sharp, whole-pixel or smooth scaling, 4:3 or square pixels, the window's size, and
   RetroArch's CRT and scanline shaders.
 

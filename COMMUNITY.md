@@ -3,6 +3,13 @@
 This community fork is maintained by bahteles and is based on tmcleroy/fighters-megamix-recomp.
 The original authors retain their credits. The GPL-3.0 license and third-party notices apply.
 
+## Fork highlights
+
+- **Full 16:9 support** for fights, menus, victory screens and credits, plus aspect-aware Gallery presentation.
+- **SFX bug fixes**, including sound synchronization when returning to fighter selection.
+- **HD texture pack support** through an optional local ZIP selected in the launcher; packs are supplied separately.
+- **In-game model Gallery** with rotation, zoom, color variants and armor options.
+
 ## Local modifications
 
 - Additional sound mailbox wait time after returning to fighter selection.
