@@ -12,3 +12,18 @@ work/
 __pycache__/
 # the reference emulator, fetched by 'make setup' for development only
 satrecomp/third_party/
+
+# Local gallery resources, extracted artwork, texture packs and runtime data
+/gallery/
+/texture-pack*/
+*.fmg
+*.fmui
+*.rgba
+*.bkr
+*.sav
+*.srm
+*.dump
+*.ram
+*.zip
+*.7z
+*.rar

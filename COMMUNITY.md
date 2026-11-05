@@ -11,9 +11,16 @@ The original authors retain their credits. The GPL-3.0 license and third-party n
 - F10 toggles the selected texture pack, including while frozen with F4.
 - Batched stage maps and indexed panel replacements, loaded per stage from the optional ZIP.
 - Widescreen title and checkerboard menu backgrounds.
+- Gallery entry in MODE SELECT, with model rotation, zoom, original color variants and armor states.
+- Gallery presentation in the game window, using the selected CRT/display shader and optional HD textures.
+- Aspect-aware placement of the Gallery entry in the HUD, with restoration of the game's aspect after closing Gallery.
+- Optional external full-screen artwork for credits and records, streamed separately from fighter textures.
+- Retain stage palette variants across Wolf's palette animation to avoid repeated atlas rebuilds.
 - Windows launcher starts without a console and launches games without a new console.
 
 The texture ZIP is supplied separately by the user. This repository supplies source code only.
+Gallery models and interface artwork are also local resources, supplied separately; no extracted
+models, menu artwork, fonts or texture packs are distributed here. See [Gallery setup](docs/GALLERY.md).
 A legally obtained game disc image is required by the original build workflow.
 
 ## Development status

@@ -179,8 +179,14 @@ void SetFeatureValue(const char *name, int value) {
 
 namespace {
     std::vector<HudLine> g_hud;
+    std::vector<HudSprite> g_sprites;
     uint64_t g_hudSerial = 0;
 } // namespace
+
+void SetHudSprites(std::vector<HudSprite> sprites) {
+    if (sprites != g_sprites) { g_sprites=std::move(sprites); g_hudSerial++; }
+}
+const std::vector<HudSprite> &HudSprites() { return g_sprites; }
 
 void SetHud(std::vector<HudLine> lines) {
     if (lines != g_hud) {

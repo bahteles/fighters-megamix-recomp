@@ -8,11 +8,13 @@
 #include <cstddef>
 #include <cstdint>
 #include <initializer_list>
+#include <functional>
 #include <string>
 #include <vector>
 
 #include "../recomp-common/settings.h"
 
+struct SDL_Window;
 namespace satrecomp {
 
 class Archive; // (state.h)
@@ -64,6 +66,13 @@ struct SaveUnlocks {
 };
 
 struct Game {
+    // A modal game screen can draw into the existing frontend's window, through its
+    // active video backend. A null image restores the game's presentation.
+    SDL_Window *modalWindow = nullptr;
+    std::function<void(const uint32_t *, int, int)> presentModal;
+    std::function<bool(int, int, const uint32_t *, std::vector<uint32_t> &)> modelHdTexture;
+    std::function<bool(bool)> setModelHdTextures;
+    bool modalQuit = false;
     std::vector<Feature> features;
     // With saveUnlocks.feature on, the backup library (hle_bios.cpp) gives the game its save file with these
     // fields raised, and takes out again what it added when the game writes the file: the game sees all it
@@ -119,6 +128,15 @@ struct HudLine {
     bool operator==(const HudLine &) const = default;
 };
 void SetHud(std::vector<HudLine> lines);
+struct HudSprite {
+    float x=0,y=0,width=0,height=0; // fractions of the game's picture
+    float aspect=0; // optional centered original picture aspect in a physical-pixel HUD
+    uint32_t columns=0,lines=0;
+    std::vector<uint32_t> pixels; // RGBA, red in the low byte
+    bool operator==(const HudSprite &) const = default;
+};
+void SetHudSprites(std::vector<HudSprite> sprites);
+const std::vector<HudSprite> &HudSprites();
 // A diagram beside the lines: circles on a dark panel (a view of the game's collision shapes, say). The
 // panel is placed like a line; its size is in parts of the picture's height; the circles are in units of
 // the diagram's own, unitsWide by unitsHigh, from the bottom left.

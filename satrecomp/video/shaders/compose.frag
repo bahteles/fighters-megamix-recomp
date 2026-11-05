@@ -24,6 +24,7 @@ layout(set = 2, binding = 11) uniform usampler2D hdAtlas;
 layout(set = 2, binding = 12) uniform sampler2D backgroundLines;
 
 layout(set = 2, binding = 13) uniform usampler2D stageAtlas;
+layout(set = 2, binding = 14) uniform sampler2D screenArt;
 
 layout(set = 3, binding = 0, std140) uniform FragmentUniforms {
     vec4 size;      // xy: the VDP2 picture's size; zw: the sprite target's size
@@ -44,6 +45,8 @@ layout(set = 3, binding = 0, std140) uniform FragmentUniforms {
     uvec4 stageFloor[16];
     uvec4 stageBackground[8];
     uvec4 stageShape[2];
+    ivec4 screenRect;
+    ivec4 screenMeta;
 };
 
 layout(location = 0) out vec4 out_color;
@@ -319,6 +322,15 @@ vec4 uiContour(vec4 original, int layer, vec2 at) {
 }
 
 vec4 textLayer(vec4 original, int layer, vec2 at, ivec2 cell) {
+    if(screenMeta.w!=0&&original.a>0.0&&max(max(original.r,original.g),original.b)<0.01){
+        original.rgb=vec3(float(screenMeta.w&255),float((screenMeta.w>>8)&255),float((screenMeta.w>>16)&255))/255.0;
+    }
+    if(screenMeta.x==layer+1&&(screenMeta.y==1||screenMeta.y==3)&&all(greaterThanEqual(cell,screenRect.xy))&&all(lessThan(cell,screenRect.xy+screenRect.zw))){
+        vec2 where=(at*size.xy-vec2(screenRect.xy))/vec2(screenRect.zw);
+        vec4 art=texture(screenArt,where);
+        if(art.a<0.05)return vec4(0.0);
+        return vec4(mix(vec3(0.0,0.0,0.12),art.rgb,art.a),float(screenMeta.z)/255.0);
+    }
     for (int i = 0; i < misc.w; ++i) {
         ivec4 area = hdText[i];
         int meta = hdTextMeta[i / 4][i % 4];
@@ -334,10 +346,19 @@ vec4 textLayer(vec4 original, int layer, vec2 at, ivec2 cell) {
 
 vec3 pixel(vec2 at) {
     ivec2 cell = clamp(ivec2(floor(at * size.xy)), ivec2(0), ivec2(size.xy) - 1);
+    if(screenMeta.y==3&&cell.y<24){
+        vec2 where=(at*size.xy-vec2(screenRect.xy))/vec2(screenRect.zw);
+        where.x=clamp(where.x,25.0/704.0,679.0/704.0);
+        return clamp(texture(screenArt,where).rgb+colorOffset[4].rgb,0.0,1.0);
+    }
+    if(screenMeta.x!=0&&screenMeta.y==2){
+        vec2 where=(at*size.xy-vec2(screenRect.xy))/vec2(screenRect.zw);
+        return clamp(texture(screenArt,where).rgb+colorOffset[screenMeta.x+1].rgb,0.0,1.0);
+    }
     bool outsideMenu = cell.x < misc.z || cell.x >= int(size.x) - misc.z;
     bool headerEdge = misc.z > 0 && menuBackground.x == 2 && cell.y < int(size.y) / 8 &&
                       (cell.x < misc.z + 64 || cell.x >= int(size.x) - misc.z - 64);
-    if (outsideMenu || headerEdge) {
+    if ((outsideMenu || headerEdge)&&screenMeta.w==0) {
         vec4 edgeBack = texelFetch(back, ivec2(0, cell.y), 0);
         if (edgeBack.a < 0.5 || menuBackground.x == 0) {
             return vec3(0.0);
@@ -367,6 +388,7 @@ vec3 pixel(vec2 at) {
         return clamp(background.rgb + colorOffset[layer].rgb, 0.0, 1.0);
     }
     vec4 backColor = texelFetch(back, ivec2(0, cell.y), 0);
+    if(screenMeta.w!=0)backColor=vec4(float(screenMeta.w&255),float((screenMeta.w>>8)&255),float((screenMeta.w>>16)&255),255.0)/255.0;
     if (backColor.a < 0.5) {
         return backColor.rgb;
     }

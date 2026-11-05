@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Tommy McLeroy. Part of Fighters Megamix Recomp: https://github.com/tmcleroy/fighters-megamix-recomp
 // Fighters Megamix: the routines of the game that are replaced by C++ (see PROGRESS.md).
 #include "game.h"
+#include "gallery.h"
 #include "lift.h"
 #include "shared_lifts.h"
 #include "state.h"
@@ -70,6 +71,7 @@ void RegisterGame() {
     }};
     RegisterLifts(&audioWait, 1);
     RegisterShared();
+    RegisterGallery();
     RegisterUnlocks();
     TheGame().wideLetterboxLayer = 2; // NBG2 draws the credits replay bars.
     // Widescreen: the stages' panels (the cages, fences and walls) are listed by four of the engine's routines,
@@ -78,7 +80,7 @@ void RegisterGame() {
     // 0x06020CD0) and two more (0x06021F76, 0x060220E6). (The gauges stay in the middle: Fighting Vipers' way of
     // moving them out, a split of NBG2's rows, would split the title screen's text here too, which is on that
     // screen in the same rows; it needs the game's "a fight is on", not found yet.)
-    TheGame().frame = [] { shared::WidenAm2PanelLimits({0x06020BC4, 0x06020CD0, 0x06021F76, 0x060220E6}); };
+    TheGame().frame = [] { shared::WidenAm2PanelLimits({0x06020BC4, 0x06020CD0, 0x06021F76, 0x060220E6}); GalleryAfterFrame(); };
     TheGame().state = [](Archive &ar) { shared::State(ar); };
 }
 

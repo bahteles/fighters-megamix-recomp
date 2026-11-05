@@ -289,18 +289,84 @@ int RunWindowed(Port &port) {
         }
         SDL_RenderPresent(renderer);
     };
-    shading.keepLast = !testSteps.empty(); // (for SATRECOMP_WINDOW_KEYS' SHOT)
+    shading.keepLast = !testSteps.empty() || getenv("SATRECOMP_MODAL_SHOT"); // Capture the displayed modal too.
 
     // The in-game menu: opened and closed by Esc, F1, a gamepad's Back/Select button (alone, or with Start
     // held) or a stick's click (the game is left from its "Quit game"). While it is open the game stands
     // still and the pad works the menu; buttons held as it closes do not reach the game until let go.
-    uint16_t previousPad = 0, heldAtClose = 0;
+    uint16_t previousPad = 0, heldAtClose = 0, modalHeldP2 = 0;
     unsigned previousMenu = 0;
     bool bothHeld = false;    // a gamepad's Start and Select (Back) together: the menu
     bool backToggled = false; // Back's own press has opened or closed the menu, and Back is still held
     std::vector<uint32_t> menuBase, menuPicture;
     uint32_t menuWidth = 0, menuHeight = 0;
     bool menuDirty = false;
+    SDL_Texture *modalTexture=nullptr;
+    int modalWidth=0,modalHeight=0;
+    float modalGameAspect=4.f/3;
+    bool modalVisible=false;
+    satrecomp::TheGame().modalWindow=window;
+    satrecomp::TheGame().modalQuit=false;
+    satrecomp::TheGame().modelHdTexture=[&](int width,int height,const uint32_t *pixels,std::vector<uint32_t> &replacement){
+        return port.gpu&&port.gpu->PreviewHdTexture(width,height,pixels,replacement);
+    };
+    satrecomp::TheGame().setModelHdTextures=[&](bool enabled){
+        if(!port.gpu)return false;
+        port.gpu->SetHdTexturePack(enabled);
+        const bool active=port.gpu->HdTexturePackEnabled();
+        satrecomp::SetFeature("hd_texture_pack",active);
+        return active;
+    };
+    satrecomp::TheGame().presentModal=[&](const uint32_t *pixels,int width,int height){
+        if(!pixels){
+            if(const char *shot=getenv("SATRECOMP_MODAL_SHOT");shot&&*shot&&shaded&&modalVisible){
+                std::vector<uint32_t> drawn;int wide=0,high=0;
+                if(shading.ReadBack(drawn,wide,high))WritePng(shot,drawn.data(),wide,high);
+            }
+            if(port.gpu){
+                port.gpu->ClearOverlay();
+                port.gpu->EndTexturePreview();
+                if(modalVisible)port.gpu->SetAspect(modalGameAspect);
+                port.gpu->SetFit(satrecomp::FeatureValue("display_scaling"),satrecomp::FeatureValue("display_shape"));
+            }
+            if(modalTexture){SDL_DestroyTexture(modalTexture);modalTexture=nullptr;}
+            modalVisible=false;
+            const bool *keys=SDL_GetKeyboardState(nullptr);
+            heldAtClose|=ReadKeyboard(keys,0);modalHeldP2=ReadKeyboard(keys,1);
+            for(size_t i=0;i<gamepads.size()&&i<2;i++){
+                if(i==0)heldAtClose|=ReadGamepad(gamepads[i],0);else modalHeldP2|=ReadGamepad(gamepads[i],1);
+            }
+            previousPad=heldAtClose;port.pad[0]=port.pad[1]=0;
+            if(satrecomp::TheGame().modalQuit)port.quit=true;
+            return;
+        }
+        if(!modalVisible){modalGameAspect=port.gpu?port.gpu->Aspect():4.f/3;modalVisible=true;}
+        if(shaded){
+            int wide=0,high=0;shading.Size(wide,high);
+            const SDL_FRect where=satrecomp::video::FitPicture(wide,high,float(width),float(height),float(width)/height,0,0);
+            // Gallery is part of the game picture and uses the selected display preset.
+            shading.Show(pixels,width,height,where,true);
+        }else if(port.gpu){
+            port.gpu->SetAspect(float(width)/height);
+            port.gpu->SetFit(0,0);
+            port.gpu->SetOverlay(pixels,width,height);
+            port.gpu->Present(window);
+        }else if(renderer){
+            if(!modalTexture||modalWidth!=width||modalHeight!=height){
+                if(modalTexture)SDL_DestroyTexture(modalTexture);
+                modalTexture=SDL_CreateTexture(renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STREAMING,width,height);
+                modalWidth=width;modalHeight=height;
+                if(modalTexture)SDL_SetTextureBlendMode(modalTexture,SDL_BLENDMODE_NONE);
+            }
+            if(modalTexture){
+                SDL_UpdateTexture(modalTexture,nullptr,pixels,width*4);
+                SDL_SetRenderDrawColor(renderer,0,0,0,255);SDL_RenderClear(renderer);
+                int wide=0,high=0;SDL_GetCurrentRenderOutputSize(renderer,&wide,&high);
+                const SDL_FRect where=satrecomp::video::FitPicture(wide,high,float(width),float(height),float(width)/height,0,0);
+                SDL_RenderTexture(renderer,modalTexture,nullptr,&where);SDL_RenderPresent(renderer);
+            }
+        }
+    };
     auto toggleMenu = [&]() {
         if (port.menu.IsOpen()) {
             port.menu.Close();
@@ -351,6 +417,7 @@ int RunWindowed(Port &port) {
     const uint64_t startedAt = SDL_GetTicksNS();
     std::string logged;
     while (running && !port.quit && (port.opt.frames == 0 || port.frame < port.opt.frames)) {
+        satrecomp::TheGame().modalWindow=window;
         SDL_Event ev;
         pass++;
         // The Display page as it is now (the menu may change it): the picture's fit, and the shader, for which the
@@ -600,7 +667,8 @@ int RunWindowed(Port &port) {
             satrecomp::Look() = look;
             heldAtClose &= pads[0];
             port.pad[0] = pads[0] & ~heldAtClose;
-            port.pad[1] = pads[1];
+            modalHeldP2&=pads[1];
+            port.pad[1] = pads[1]&~modalHeldP2;
         }
 
         if (audio.stream && silent != port.menu.muted) {
@@ -728,6 +796,11 @@ int RunWindowed(Port &port) {
     }
 
     port.audioSink = nullptr;
+    satrecomp::TheGame().presentModal={};
+    satrecomp::TheGame().modelHdTexture={};
+    satrecomp::TheGame().setModelHdTextures={};
+    satrecomp::TheGame().modalWindow=nullptr;
+    if(modalTexture)SDL_DestroyTexture(modalTexture);
     if (audio.stream) {
         SDL_DestroyAudioStream(audio.stream);
     }

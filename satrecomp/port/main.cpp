@@ -1086,7 +1086,7 @@ void Port::UpdateHud() {
     const uint32_t height = std::min<uint32_t>(outputHeight, 720), width = std::max<uint32_t>(outputWidth * height / outputHeight, 1);
     static std::vector<uint32_t> layer;
     layer.assign(static_cast<size_t>(width) * height, 0);
-    DrawHud(layer.data(), static_cast<int>(width), static_cast<int>(height));
+    DrawHud(layer.data(), static_cast<int>(width), static_cast<int>(height), true);
     gpu->SetHudLayer(layer.data(), width, height);
 }
 

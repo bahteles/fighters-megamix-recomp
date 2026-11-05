@@ -86,11 +86,26 @@ uint64_t HudShownSerial() {
     return satrecomp::HudSerial() + g_noteSerial;
 }
 bool HudShows() {
-    return !g_note.empty() || !satrecomp::Hud().empty() || !satrecomp::HudCircles().empty() || satrecomp::TheHudDiagram().width > 0;
+    return !g_note.empty() || !satrecomp::Hud().empty() || !satrecomp::HudSprites().empty() || !satrecomp::HudCircles().empty() || satrecomp::TheHudDiagram().width > 0;
 }
 
-void DrawHud(uint32_t *pixels, int width, int height) {
+void DrawHud(uint32_t *pixels, int width, int height, bool physicalPixels) {
     const Layer layer{pixels, width, height};
+    for (const auto &sprite:satrecomp::HudSprites()) {
+        if(!sprite.columns||!sprite.lines||sprite.pixels.size()!=size_t(sprite.columns)*sprite.lines)continue;
+        const float pictureWidth=physicalPixels&&sprite.aspect>0?height*sprite.aspect:float(width);
+        const float left=(width-pictureWidth)/2;
+        const float x=left+sprite.x*pictureWidth,y=sprite.y*height,w=sprite.width*pictureWidth,h=sprite.height*height;
+        if(w<=0||h<=0)continue;
+        for(int py=std::max(0,int(y));py<std::min(height,int(std::ceil(y+h)));py++) {
+            unsigned sy=unsigned(std::clamp(int((py+.5f-y)*sprite.lines/h),0,int(sprite.lines)-1));
+            for(int px=std::max(0,int(x));px<std::min(width,int(std::ceil(x+w)));px++) {
+                unsigned sx=unsigned(std::clamp(int((px+.5f-x)*sprite.columns/w),0,int(sprite.columns)-1));
+                uint32_t p=sprite.pixels[size_t(sy)*sprite.columns+sx];
+                if(p>>24)layer.Put(px,py,{uint8_t(p),uint8_t(p>>8),uint8_t(p>>16),uint8_t(p>>24)});
+            }
+        }
+    }
     // A font dot is a pixel of a 240-line picture
     const float d = std::max(static_cast<float>(height) / 240.0f, 1.0f);
     const float thin = std::max(d * 0.6f, 1.0f); // (an outline's width)

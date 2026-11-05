@@ -46,6 +46,9 @@ public:
     void SetUiContours(bool enabled) { m_uiContours = enabled; }
     void SetHdTexturePack(bool enabled);
     bool HdTexturePackEnabled() const { return m_hdEnabled; }
+    // The modal model viewer shares the selected pack and exact original-pixel matching.
+    bool PreviewHdTexture(int width, int height, const uint32_t *original, std::vector<uint32_t> &replacement);
+    void EndTexturePreview() { std::string().swap(m_hdPreview); }
     void SetHdTexturePackPath(const std::string &path) { m_hdPackPath = path; }
     void SetTextureUpscale(bool enabled) { m_textureUpscale = enabled; }
     // Run-ahead (port/main.cpp): the VDP1's two framebuffers as drawn here are kept before frames that will
@@ -142,9 +145,11 @@ private:
         uint16_t width, height;
         uint32_t offset;
         std::vector<uint8_t> original;
+        uint32_t previewOffset = 0;
     };
     std::vector<HdTexture> m_hdTextures;
     std::string m_hdPackPath;
+    std::string m_hdPreview; // only retained while the modal viewer is open
     SDL_GPUTexture *m_hdAtlas = nullptr;
     struct HdText {
         int32_t leftFromCenter;
@@ -178,6 +183,24 @@ private:
     bool MatchesHdText(const Frame &frame, const HdText &text) const;
     bool m_hdEnabled = false, m_hdAttempted = false;
     bool LoadHdTexturePack();
+    struct ScreenArt {
+        uint32_t layer,sourceWidth,sourceHeight,kind,crc;
+        int32_t left,top,width,height;
+        uint32_t columns,lines;
+        std::string member;
+    };
+    std::vector<ScreenArt> m_screenArt;
+    SDL_GPUTexture *m_screenTexture=nullptr;
+    bool m_screenAttempted=false;
+    int m_screenUploaded=-1;
+    void UpdateScreenArt(const Frame &frame,int32_t (&rect)[4],int32_t (&meta)[4]);
+    struct RecordGlyph { uint32_t width,crc; std::vector<uint8_t> pixels; };
+    std::vector<RecordGlyph> m_recordGlyphs;
+    std::vector<uint8_t> m_recordsHeader;
+    bool m_recordsAttempted=false;
+    uint32_t m_recordsCrc=0;
+    bool UploadScreenPixels(const void *pixels,uint32_t width,uint32_t height);
+    void UpdateRecordArt(const Frame &frame,int32_t (&rect)[4],int32_t (&meta)[4]);
     bool m_uiContours = false;
     bool m_textureUpscale = false;
     float m_aspect = 4.0f / 3.0f;

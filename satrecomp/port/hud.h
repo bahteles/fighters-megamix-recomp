@@ -19,6 +19,6 @@ bool HudShows();
 
 // Draws it over a picture (32-bit pixels, red in the low byte, alpha in the high one; over a picture that is
 // all zeros this gives the readout alone, to be blended over the game's picture by its alpha)
-void DrawHud(uint32_t *pixels, int width, int height);
+void DrawHud(uint32_t *pixels, int width, int height, bool physicalPixels = false);
 
 } // namespace port

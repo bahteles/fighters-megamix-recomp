@@ -40,6 +40,7 @@ namespace {
         int32_t menuBackground[4];
         uint32_t hdBackground[4];
         uint32_t stageFloor[64], stageBackground[32], stageShape[8];
+        int32_t screenRect[4], screenMeta[4];
     };
 
     constexpr uint32_t kVramWidth = 1024, kVramHeight = 512;
@@ -49,7 +50,7 @@ namespace {
     constexpr uint32_t kWinnerLeftOfCenter = 93;
     // This pack format uses ordinary ZIP members without streaming data descriptors.
     // Read only the known members, directly from the archive.
-    bool ReadTextureZip(const std::filesystem::path &path, std::string (&members)[5]) {
+    bool ReadTextureZip(const std::filesystem::path &path, std::string (&members)[5], bool fightersOnly = false) {
         std::ifstream file(path, std::ios::binary);
         constexpr size_t maxBytes = 256u * 1024 * 1024;
         // Source signatures and replacement pixels share the ZIP budget, but only
@@ -73,7 +74,7 @@ namespace {
             if (!file.read(name.data(), name.size()) || !file.seekg(word(28), std::ios::cur)) { return false; }
             int index = 0;
             while (index < 5 && name != names[index]) { ++index; }
-            if (index == 5) {
+            if (index == 5 || (fightersOnly && index != 0)) {
                 file.seekg(compressed, std::ios::cur);
                 continue;
             }
@@ -99,6 +100,7 @@ namespace {
                 return false;
             }
             if (crc32(0, reinterpret_cast<const Bytef *>(out.data()), bytes) != crc) { return false; }
+            if (fightersOnly) { return true; }
             total += bytes;
         }
         return false;
@@ -160,7 +162,7 @@ bool Gpu::Init(SDL_GPUDevice *device) {
     SDL_GPUShader *quadVertex = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_VERTEX, quad_vert, 0, 1);
     SDL_GPUShader *quadFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, quad_frag, 3, 1);
     SDL_GPUShader *screenVertex = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_VERTEX, screen_vert, 0, 0);
-    SDL_GPUShader *composeFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, compose_frag, 14, 1);
+    SDL_GPUShader *composeFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, compose_frag, 15, 1);
     SDL_GPUShader *hudFragment = SATRECOMP_SHADER(SDL_GPU_SHADERSTAGE_FRAGMENT, hud_frag, 1, 0);
     if (!quadVertex || !quadFragment || !screenVertex || !composeFragment) {
         return false;
@@ -260,6 +262,7 @@ bool Gpu::Init(SDL_GPUDevice *device) {
 }
 
 void Gpu::Shutdown() {
+    Release(m_screenTexture);
     if (!m_device) {
         return;
     }
@@ -454,6 +457,7 @@ bool Gpu::LoadHdTexturePack() {
             return false;
         }
         HdTexture texture{width, height, static_cast<uint32_t>(offset), std::vector<uint8_t>(nativeBytes)};
+        texture.previewOffset = static_cast<uint32_t>(file.tellg()) + nativeBytes;
         pixels.resize(offset + nativeBytes * kHdScale * kHdScale);
         if (!file.read(reinterpret_cast<char *>(texture.original.data()), nativeBytes) ||
             !file.read(reinterpret_cast<char *>(pixels.data() + offset), nativeBytes * kHdScale * kHdScale)) {
@@ -574,6 +578,37 @@ bool Gpu::LoadHdTexturePack() {
     m_hdTextures = std::move(textures);
     IndexStagePages();
     return true;
+}
+
+bool Gpu::PreviewHdTexture(int width, int height, const uint32_t *original, std::vector<uint32_t> &replacement) {
+    if(!m_hdEnabled || !original || width<1 || height<1 || width>504 || height>255)return false;
+    std::vector<uint8_t> signature(size_t(width)*height*2);
+    for(size_t i=0;i<size_t(width)*height;i++){
+        const uint32_t rgba=original[i];
+        const uint16_t color=(rgba>>24?0x8000:0)|((rgba&255)>>3)|(((rgba>>8&255)>>3)<<5)|(((rgba>>16&255)>>3)<<10);
+        signature[i*2]=color>>8;signature[i*2+1]=color&255;
+    }
+    const uint32_t key=(uint32_t(width)<<16)|uint32_t(height);
+    auto match=std::lower_bound(m_hdTextures.begin(),m_hdTextures.end(),key,[](const HdTexture &texture,uint32_t value){return ((uint32_t(texture.width)<<16)|texture.height)<value;});
+    for(;match!=m_hdTextures.end()&&match->width==width&&match->height==height;++match){
+        if(match->original!=signature)continue;
+        if(m_hdPreview.empty()){
+            const std::filesystem::path path(std::u8string(reinterpret_cast<const char8_t*>(m_hdPackPath.c_str())));
+            std::string members[5];if(!ReadTextureZip(path,members,true))return false;
+            m_hdPreview=std::move(members[0]);
+        }
+        const size_t count=size_t(width)*height*kHdScale*kHdScale;
+        if(match->previewOffset>m_hdPreview.size()||count*2>m_hdPreview.size()-match->previewOffset)return false;
+        replacement.resize(count);
+        const auto *pixels=reinterpret_cast<const uint8_t*>(m_hdPreview.data()+match->previewOffset);
+        auto expand=[](uint32_t v){return (v<<3)|(v>>2);};
+        for(size_t i=0;i<count;i++){
+            const uint16_t color=(uint16_t(pixels[i*2])<<8)|pixels[i*2+1];
+            replacement[i]=expand(color&31)|(expand(color>>5&31)<<8)|(expand(color>>10&31)<<16)|(color&0x8000?0xff000000:0);
+        }
+        return true;
+    }
+    return false;
 }
 
 void Gpu::IndexStagePages() {
@@ -761,6 +796,9 @@ void Gpu::StagePageOffsets(const Frame &frame, uint32_t (&floor)[64], uint32_t (
     }
     // Keep all variants of the identified panel bank resident while its camera moves.
     // Visibility changes must not cause a ZIP inflate and GPU upload every frame.
+    // Keep previously loaded palettes too: Wolf's animated panel palette temporarily
+    // disappears from CRAM. Evicting it would rebuild the entire atlas on every blink.
+    // Requests still require an exact palette match; residency alone never selects art.
     std::vector<int> visibleBanks = active;
     std::vector<uint32_t> paletteCrcs;
     for (uint32_t bank = 0; bank < 128; ++bank) {
@@ -780,7 +818,8 @@ void Gpu::StagePageOffsets(const Frame &frame, uint32_t (&floor)[64], uint32_t (
                 page.cellsCrc == bank.cellsCrc &&
                 (page.width == bank.width ||
                  std::find(m_activeStagePages.begin(), m_activeStagePages.end(), static_cast<int>(index)) != m_activeStagePages.end()) &&
-                std::find(paletteCrcs.begin(), paletteCrcs.end(), page.paletteCrc) != paletteCrcs.end()) {
+                (std::find(paletteCrcs.begin(), paletteCrcs.end(), page.paletteCrc) != paletteCrcs.end() ||
+                 std::find(m_activeStagePages.begin(), m_activeStagePages.end(), static_cast<int>(index)) != m_activeStagePages.end())) {
                 active.push_back(static_cast<int>(index));
             }
         }
@@ -1150,6 +1189,7 @@ void Gpu::Draw(const Frame &frame) {
     // The picture
     {
         ComposeUniforms uniforms{};
+        UpdateScreenArt(frame,uniforms.screenRect,uniforms.screenMeta);
         uniforms.size[0] = static_cast<float>(frame.width);
         uniforms.size[1] = static_cast<float>(frame.height);
         uniforms.size[2] = static_cast<float>(m_spriteWidth * m_scale);
@@ -1276,15 +1316,16 @@ void Gpu::Draw(const Frame &frame) {
         target.store_op = SDL_GPU_STOREOP_STORE;
         SDL_GPURenderPass *pass = SDL_BeginGPURenderPass(cmd, &target, 1, nullptr);
         SDL_BindGPUGraphicsPipeline(pass, m_composePipeline);
-        const SDL_GPUTextureSamplerBinding samplers[14] = {
+        const SDL_GPUTextureSamplerBinding samplers[15] = {
             {m_sprites[0], m_nearest}, {m_colors, m_nearest},    {m_layers[0], m_nearest},  {m_layers[1], m_nearest},
             {m_layers[2], m_nearest},  {m_layers[3], m_nearest}, {m_layers[4], m_nearest},  {m_window, m_nearest},
             {m_back, m_nearest},       {m_vram2, m_nearest},     {m_floorLines, m_nearest},
             {m_hdEnabled ? m_hdAtlas : m_vram, m_nearest},
             {m_backgroundLines, m_nearest},
             {m_stageAtlas ? m_stageAtlas : m_vram, m_nearest},
+            {m_screenTexture ? m_screenTexture : m_layers[1], m_nearest},
         };
-        SDL_BindGPUFragmentSamplers(pass, 0, samplers, 14);
+        SDL_BindGPUFragmentSamplers(pass, 0, samplers, 15);
         SDL_PushGPUFragmentUniformData(cmd, 0, &uniforms, sizeof(uniforms));
         SDL_DrawGPUPrimitives(pass, 3, 1, 0, 0);
         SDL_EndGPURenderPass(pass);
@@ -1573,4 +1614,5 @@ void Gpu::Present(SDL_Window *window) {
     SDL_SubmitGPUCommandBuffer(cmd);
 }
 
+#include "enhanced_screens.inc"
 } // namespace satrecomp::video
