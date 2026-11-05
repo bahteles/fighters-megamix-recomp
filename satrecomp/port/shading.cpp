@@ -2,6 +2,7 @@
 // Copyright (C) 2026 Tommy McLeroy. Part of satrecomp: https://github.com/tmcleroy/satrecomp
 
 #include "shading.h"
+#include <zlib.h>
 
 #ifdef __ANDROID__
 #include <dlfcn.h>
@@ -290,6 +291,8 @@ bool Shading::Open(SDL_Window *window, std::string &error) {
 }
 
 void Shading::Close() {
+    SetPresentationRate(0);
+    if(m_trace){fclose(m_trace);m_trace=nullptr;}
     if (m_context) {
         SDL_GL_MakeCurrent(m_window, m_context);
         std::string error;
@@ -354,11 +357,30 @@ bool Shading::Load(const std::string &preset, std::string &error) {
     return true;
 }
 
+void Shading::SetPresentationRate(int fps){
+    if(fps==m_presentationRate)return;
+    m_presentationRate=fps;
+    m_deadline=fps>0?SDL_GetTicksNS()+uint64_t(2e9/fps):0;
+}
+void Shading::Swap(){
+    const uint64_t rendered=SDL_GetTicksNS();
+    if(m_deadline&&rendered<m_deadline)SDL_DelayPrecise(m_deadline-rendered);
+    const uint64_t stamp=SDL_GetTicksNS();
+    SDL_GL_SwapWindow(m_window);
+    m_lastSwap=stamp;
+    // A missed deadline must not be followed by a short-interval catch-up burst.
+    if(m_presentationRate>0)m_deadline=stamp+uint64_t(1e9/m_presentationRate);
+    if(m_trace){fprintf(m_trace,"%llu,%.6f,%llu,%u,%.6f\n",(unsigned long long)stamp,m_traceLast?(stamp-m_traceLast)/1e6:0.,(unsigned long long)m_frameTag,m_contentCrc,(rendered-m_renderStarted)/1e6);m_traceLast=stamp;}
+}
+
 void Shading::Size(int &width, int &height) const {
     SDL_GetWindowSizeInPixels(m_window, &width, &height);
 }
 
 void Shading::Show(const uint32_t *pixels, int width, int height, const SDL_FRect &where, bool shade, const Zoomed *zoomed) {
+    m_renderStarted=SDL_GetTicksNS();
+    if(!m_traceChecked){m_traceChecked=true;if(const char *path=getenv("SATRECOMP_PRESENT_TRACE");path&&*path){m_trace=fopen(path,"w");if(m_trace)fprintf(m_trace,"swap_ns,delta_ms,simulation_frame,content_crc,render_ms\n");}}
+    if(m_trace)m_contentCrc=crc32(0,reinterpret_cast<const Bytef*>(pixels),size_t(width)*height*4);
     std::string error;
     const Library *library = TheLibrary(error);
     if (!m_context || !library) {
@@ -404,7 +426,7 @@ void Shading::Show(const uint32_t *pixels, int width, int height, const SDL_FRec
         // The preset draws the picture into a texture of `where`'s size, which then goes to the window
         const int drawnWidth = right - left, drawnHeight = top - foot;
         if (drawnWidth <= 0 || drawnHeight <= 0) {
-            SDL_GL_SwapWindow(m_window);
+            Swap();
             return;
         }
         if (!m_drawn || drawnWidth != m_drawnWidth || drawnHeight != m_drawnHeight) {
@@ -473,7 +495,7 @@ void Shading::Show(const uint32_t *pixels, int width, int height, const SDL_FRec
     if (keepLast) {
         Keep();
     }
-    SDL_GL_SwapWindow(m_window);
+    Swap();
 }
 
 void Shading::SetOverlay(const uint32_t *pixels, int width, int height) {

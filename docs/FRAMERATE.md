@@ -48,14 +48,24 @@ Intermediate pictures use dedicated sprite/VRAM targets. They reuse source mater
 textures and composition settings; they do not reconstruct the machine's displayed and pending
 framebuffers. GPU framebuffer comparisons validate that those originals are preserved.
 
-The CRT path at 60/120 uses a small queue of GPU readbacks, consuming completed images rather
-than waiting on a fresh fence for every presentation. This can add a buffered presentation interval
-of visual latency. Original mode and screenshots retain synchronous readback. Output-size and
-save-state changes invalidate the queue.
+At 120 FPS with CRT, a persistent producer prepares two exact-time interpolated pictures while
+OpenGL presents the preceding pair on the main thread. Window events and modal interfaces stay
+on the main thread, and the producer finishes before input or settings are changed. This adds
+approximately 16.7 ms of buffering, in addition to interpolation history. Other presentation modes
+retain their existing paths. The 60 FPS CRT path uses asynchronous GPU readbacks.
 
-The selected rate is a target, not a performance guarantee. In a local 1440p replay with CRT, HD
-textures and geometry correction, the previous build fell to about 25 presentations per second.
-The optimized build measured approximately 73–116 FPS across test runs while retaining the original
-simulation cadence. The latest sample delivered about 116 completed CRT pictures per second, not just 116 window
-presentations. These short samples were taken with another 3D application running; they are
-regression comparisons, not an isolated maximum-performance benchmark or proof of locked 120 FPS.
+The 120 FPS CRT presenter spaces swaps by at least 8.33 ms. A missed deadline starts a new interval;
+it does not trigger a short-interval burst to recover the average FPS count. Preparation uses the
+planned picture time rather than the time at which a slow simulation update finishes. Each prepared
+picture is read back synchronously on the producer, avoiding stale pictures from a non-ready queue.
+
+Set `SATRECOMP_PRESENT_TRACE` to a local CSV path to record presentation timestamps, simulation
+frame numbers, input-picture CRCs and CPU render/submission duration. Tracing adds CRC overhead and
+measures swap-call timing, not physical monitor scanout. It is disabled by default.
+
+In a local 1440p replay with CRT, HD textures and geometry correction, the first sample measured
+8.334 ms median, 8.423 ms p95 and 11.800 ms p99 between swaps (115.2 FPS average), with no adjacent
+repeated input pictures in the sampled moving scene. A second run under competing system load
+measured 8.335 ms median but 28.146 ms p95 (83.5 FPS average). Peaks remain possible: this is a
+pacing correction, not proof of locked 120 FPS or an isolated hardware benchmark. Replay simulation
+and audio hashes matched the previous implementation for all 1,000 compared simulation frames.

@@ -177,6 +177,7 @@ void Dump(){
     fclose(f);
 }
 void Show(){
+    if(!SDL_IsMainThread()&&satrecomp::TheGame().onUiThread){satrecomp::TheGame().onUiThread([]{Show();});return;}
     fprintf(stderr,"Gallery: P1=%zu P2=%zu textures=%zu\n",models[0].faces.size(),models[1].faces.size(),textures.size());
     if(const char *only=getenv("FMM_GALLERY_CAPTURE_ONLY");only&&*only)return;
     if(models[0].faces.empty()&&models[1].faces.empty()){
@@ -505,6 +506,7 @@ void Show(){
 }
 namespace satrecomp {
 bool OpenGalleryCatalog(){
+    if(!SDL_IsMainThread()&&TheGame().onUiThread){bool opened=false;TheGame().onUiThread([&]{opened=OpenGalleryCatalog();});return opened;}
     if(!LoadCatalog()){
         SDL_ShowSimpleMessageBox(SDL_MESSAGEBOX_ERROR,"Gallery","Model catalog not found in the gallery folder beside the game.",nullptr);return false;
     }

@@ -12,6 +12,7 @@
 #include <SDL3/SDL.h>
 
 #include <cstdint>
+#include <cstdio>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,9 @@ public:
     // Takes the window's OpenGL (an OpenGL window, SDL_WINDOW_OPENGL); false with the reason
     bool Open(SDL_Window *window, std::string &error);
     void Close();
+    void SetPresentationRate(int fps);
+    uint64_t LastPresentationTime() const {return m_lastSwap;}
+    void SetFrameTag(uint64_t tag){m_frameTag=tag;}
     // Recreate the filter chain after a drawable/focus transition, retaining the preset.
     void Refresh(){m_refreshPending=true;}
     // The preset to draw with (a .slangp file); false with the reason, and the one before is kept
@@ -56,6 +60,12 @@ public:
     bool ReadBack(std::vector<uint32_t> &pixels, int &width, int &height);
 
 private:
+    int m_presentationRate=0;
+    uint64_t m_deadline=0,m_lastSwap=0,m_frameTag=0,m_renderStarted=0,m_traceLast=0;
+    uint32_t m_contentCrc=0;
+    FILE *m_trace=nullptr;
+    bool m_traceChecked=false;
+    void Swap();
     SDL_Window *m_window = nullptr;
     SDL_GLContext m_context = nullptr;
     void *m_chain = nullptr; // (librashader's libra_gl_filter_chain_t)

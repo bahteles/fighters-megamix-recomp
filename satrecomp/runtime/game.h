@@ -73,6 +73,8 @@ struct Game {
     std::function<bool(int, int, const uint32_t *, std::vector<uint32_t> &)> modelHdTexture;
     std::function<bool(bool)> setModelHdTextures;
     bool modalQuit = false;
+    // Render workers synchronously marshal modal UI to the SDL main thread.
+    std::function<void(std::function<void()>)> onUiThread;
     // Optional host-only subpixel coordinates for a complete distorted sprite/polygon.
     bool (*preciseQuad)(const int (*)[2], const uint16_t *, float (*)[2]) = nullptr;
     std::vector<Feature> features;

@@ -7,6 +7,7 @@
 #include "png_write.h"
 #include "port.h"
 #include "shading.h"
+#include "frame_worker.h"
 
 #include "../video/gpu.h"
 
@@ -344,7 +345,7 @@ int RunWindowed(Port &port) {
             if(satrecomp::TheGame().modalQuit)port.quit=true;
             return;
         }
-        if(!modalVisible){modalGameAspect=port.gpu?port.gpu->Aspect():4.f/3;modalVisible=true;}
+        if(!modalVisible){if(shaded)shading.SetPresentationRate(0);modalGameAspect=port.gpu?port.gpu->Aspect():4.f/3;modalVisible=true;}
         if(shaded){
             int wide=0,high=0;shading.Size(wide,high);
             const SDL_FRect where=satrecomp::video::FitPicture(wide,high,float(width),float(height),float(width)/height,0,0);
@@ -418,6 +419,44 @@ int RunWindowed(Port &port) {
     uint64_t nextFrame = SDL_GetTicksNS();
     double nextSimulation = 0;
     int previousRate = -1;
+    // The producer owns Port/GPU/audio until joined. Presentation only reads immutable pictures.
+    struct PreparedPicture {std::vector<uint32_t> pixels;uint32_t width=0,height=0;uint64_t frame=0;SDL_FRect where{};};
+    struct PreparedPair {PreparedPicture picture[2];std::vector<int16_t> audio;};
+    FrameWorker producer;
+    PreparedPair prepared;
+    bool buffered=false;
+    double prepareTime=0;
+    int pairWide=0,pairHigh=0;
+    std::mutex uiMutex;std::function<void()> uiTask;
+    satrecomp::TheGame().onUiThread=[&](std::function<void()> fn){
+        if(SDL_IsMainThread()){fn();return;}
+        auto done=std::make_shared<std::promise<void>>();auto result=done->get_future();
+        {std::lock_guard lock(uiMutex);uiTask=[fn=std::move(fn),done]{try{fn();done->set_value();}catch(...){done->set_exception(std::current_exception());}};}
+        result.get();
+    };
+    auto awaitPair=[&](std::future<PreparedPair> &future){
+        while(future.wait_for(std::chrono::milliseconds(0))!=std::future_status::ready){
+            std::function<void()> task;{std::lock_guard lock(uiMutex);task=std::move(uiTask);uiTask={};}
+            if(task)task();else SDL_Delay(1);
+        }
+        return future.get();
+    };
+    auto makePair=[&](double first){
+        PreparedPair pair;
+        const double step=kFrameNs;
+        if(first-nextSimulation>100'000'000.0){nextSimulation=first;port.gpu->SetInterpolation(false);}
+        port.gpu->SetInterpolation(true);
+        for(int i=0;i<2;i++){
+            const double time=first+i*(1e9/120);
+            while(nextSimulation<=time&&!port.quit&&(!port.opt.frames||port.frame<port.opt.frames)){port.RunFrame();nextSimulation+=step;}
+            const float fraction=float(std::clamp((time-(nextSimulation-step))/step,0.,1.));
+            port.gpu->DrawInterpolated(fraction);
+            auto &picture=pair.picture[i];picture.frame=port.frame;picture.width=port.gpu->OutputWidth();picture.height=port.gpu->OutputHeight();
+            picture.where=port.gpu->Fit(pairWide,pairHigh);
+            port.gpu->ReadShown(picture.pixels);
+        }
+        pair.audio=std::move(audio.pending);audio.pending.clear();return pair;
+    };
     bool running = true;
     uint64_t pass = 0, loggedFrame = ~0ull;
     const uint64_t startedAt = SDL_GetTicksNS();
@@ -728,6 +767,7 @@ int RunWindowed(Port &port) {
             SDL_Delay(8);
             nextFrame = SDL_GetTicksNS();
             nextSimulation = double(nextFrame);
+            buffered=false;shading.SetPresentationRate(0);previousRate=-1;
             continue;
         }
         if (port.gpu) {
@@ -742,6 +782,31 @@ int RunWindowed(Port &port) {
             showNote(paused ? "PAUSED  F8: A FRAME ON  F4: GO ON" : port.menu.Speed() != 100 ? "SPEED " + std::to_string(port.menu.Speed()) + "%" : "");
         }
         updateBorderless();
+        const bool paired=shaded&&port.gpu&&satrecomp::FeatureValue("display_framerate")==3&&!paused&&!stepFrame&&!port.opt.unthrottled&&port.menu.Speed()==100;
+        if(paired){
+            port.stepping=false;
+            port.gpu->SizeFor(0,0);
+            shading.Size(pairWide,pairHigh);
+            shading.SetPresentationRate(120);
+            if(!buffered){
+                prepareTime=double(SDL_GetTicksNS());nextSimulation=prepareTime;port.gpu->SetInterpolation(false);
+                auto initial=producer.Run([&]{return makePair(prepareTime);});prepared=awaitPair(initial);
+                prepareTime+=2e9/120;buffered=true;
+            }
+            // Keep simulation work off the swap deadline; GL and window operations remain here.
+            auto pending=producer.Run([&,time=prepareTime]{return makePair(time);});
+            if(audio.stream&&!prepared.audio.empty())SDL_PutAudioStreamData(audio.stream,prepared.audio.data(),int(prepared.audio.size()*sizeof(int16_t)));
+            bool shown=false;
+            for(const auto &picture:prepared.picture)if(!picture.pixels.empty()){
+                shading.SetFrameTag(picture.frame);shading.Show(picture.pixels.data(),int(picture.width),int(picture.height),picture.where,true);shown=true;
+            }
+            if(!shown)SDL_DelayPrecise(uint64_t(2e9/120));
+            prepared=awaitPair(pending);
+            prepareTime=double(shading.LastPresentationTime()?shading.LastPresentationTime():SDL_GetTicksNS())+3e9/120;
+            continue;
+        }
+        if(buffered){buffered=false;previousRate=-1;}
+        shading.SetPresentationRate(0);
         const bool runs = !paused || stepFrame;
         stepFrame = false;
         if (runs) {
@@ -807,6 +872,7 @@ int RunWindowed(Port &port) {
                 // (the picture at the Saturn's own size, with the readout, read back and drawn through the preset)
                 port.gpu->SizeFor(0, 0);
                 const bool smooth=satrecomp::FeatureValue("display_framerate")>=2&&!paused;
+                shading.SetFrameTag(port.frame);
                 if (smooth?port.gpu->ReadShownAsync(shadedPixels):port.gpu->ReadShown(shadedPixels)) {
                     showShaded(shadedPixels.data(), port.gpu->OutputWidth(), port.gpu->OutputHeight(), true);
                 }
@@ -858,6 +924,7 @@ int RunWindowed(Port &port) {
     }
 
     if (port.gpu && getenv("SATRECOMP_WINDOW_LOG")) fprintf(stderr,"Interpolated pictures: %llu\n",static_cast<unsigned long long>(port.gpu->InterpolatedPictures()));
+    satrecomp::TheGame().onUiThread={};
     port.audioSink = nullptr;
     satrecomp::TheGame().presentModal={};
     satrecomp::TheGame().modelHdTexture={};
