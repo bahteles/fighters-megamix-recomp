@@ -53,3 +53,17 @@ python tools/gallery/update_typography.py /path/to/gallery/gallery-theme.fmui --
 Use a bold italic serif face for titles and a regular sans-serif face for settings. Back up the
 local theme first. The script retains existing artwork and adds the labels needed by the current
 layout; it does not bundle or upload artwork, models, fonts, or texture packs.
+
+## Model visibility
+
+Gallery resolves triangle visibility with per-pixel depth testing and perspective-correct texture
+coordinates. This fixes rear faces covering the face or torso when whole polygons were sorted by
+average depth. Transparent texels leave the surfaces behind them visible. The correction applies
+to the Gallery renderer and does not change model files, texture packs or combat rendering.
+
+Regression checks can run without game resources:
+
+```sh
+c++ -std=c++20 -I games/fighters_megamix/src tools/test_gallery_raster.cpp -o test-gallery-raster
+./test-gallery-raster
+```

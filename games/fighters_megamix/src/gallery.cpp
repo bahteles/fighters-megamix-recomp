@@ -3,6 +3,7 @@
 // the original routine still runs unchanged. Nothing is written to guest memory.
 #include "gallery.h"
 #include "gallery_theme.h"
+#include "gallery_raster.h"
 #include "game.h"
 #include "lift.h"
 #include "png_write.h"
@@ -198,18 +199,23 @@ void Show(){
         theme.Clear();SDL_DestroyRenderer(renderer);if(canvas)SDL_DestroySurface(canvas);
         if(!embedded)SDL_DestroyWindow(window);if(ownVideo)SDL_QuitSubSystem(SDL_INIT_VIDEO);return;
     }
-    std::vector<SDL_Texture*> gpuTextures;
+    std::vector<Texture> renderTextures;
+    std::vector<bool> smoothTextures;
+    SDL_Texture *modelLayer=SDL_CreateTexture(renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STREAMING,1280,720);
+    if(modelLayer)SDL_SetTextureBlendMode(modelLayer,SDL_BLENDMODE_BLEND);
+    int modelWidth=1280,modelHeight=720;
+    std::vector<uint32_t> modelPixels(1280*720);
+    std::vector<float> modelDepth(1280*720);
     bool hd=satrecomp::FeatureOn("hd_texture_pack")&&bool(satrecomp::TheGame().modelHdTexture);
     auto upload=[&]{
-    for(auto *texture:gpuTextures)if(texture)SDL_DestroyTexture(texture);gpuTextures.clear();
+    renderTextures.clear();smoothTextures.clear();
     unsigned replacements=0;
     for(auto &t:textures){
         std::vector<uint32_t> pixels;
         bool replaced=hd&&satrecomp::TheGame().modelHdTexture&&satrecomp::TheGame().modelHdTexture(t.w,t.h,t.pixels.data(),pixels);
-        int width=t.w*(replaced?4:1),height=t.h*(replaced?4:1);replacements+=replaced;
-        SDL_Texture *texture=SDL_CreateTexture(renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STATIC,width,height);
-        if(texture){SDL_UpdateTexture(texture,nullptr,replaced?pixels.data():t.pixels.data(),width*4);SDL_SetTextureBlendMode(texture,SDL_BLENDMODE_BLEND);SDL_SetTextureScaleMode(texture,replaced?SDL_SCALEMODE_LINEAR:SDL_SCALEMODE_NEAREST);}
-        gpuTextures.push_back(texture);
+        replacements+=replaced;
+        renderTextures.push_back({t.w*(replaced?4:1),t.h*(replaced?4:1),replaced?std::move(pixels):t.pixels});
+        smoothTextures.push_back(replaced);
     }
     fprintf(stderr,"Gallery textures: %s replacements=%u/%zu\n",hd?"HD":"SD",replacements,textures.size());
     };upload();
@@ -220,6 +226,7 @@ void Show(){
     if(const char *angle=getenv("FMM_GALLERY_ANGLE"))sscanf(angle,"%f,%f",&yaw,&pitch);
     int selected=models[0].faces.empty()?1:0;
     if(!catalogMode)if(const char *player=getenv("FMM_GALLERY_PLAYER"))selected=atoi(player)==2?1:0;
+    if(const char *view=getenv("FMM_GALLERY_VIEW"))sscanf(view,"%f,%f,%f,%f,%f",&yaw,&pitch,&zoom,&panX,&panY);
     bool running=true,spin=false,wire=false,drag=false,pan=false,picker=false,armorFull=true;unsigned frame=0;
     int pickCursor=selected,colorIndex=0;
     auto reset=[&]{yaw=catalogMode?1.57f:0;pitch=panX=panY=0;zoom=1;};
@@ -381,6 +388,13 @@ void Show(){
         for(auto *pad:pads){auto axis=[&](SDL_GamepadAxis a){float v=SDL_GetGamepadAxis(pad,a)/32768.f;return std::abs(v)<0.18f?0.f:v;};yaw+=axis(SDL_GAMEPAD_AXIS_RIGHTX)*dt*1.8f;pitch=std::clamp(pitch+axis(SDL_GAMEPAD_AXIS_RIGHTY)*dt*1.5f,-1.5f,1.5f);zoom=std::clamp(zoom*std::exp((axis(SDL_GAMEPAD_AXIS_RIGHT_TRIGGER)-axis(SDL_GAMEPAD_AXIS_LEFT_TRIGGER))*dt),0.35f,4.f);}
         if(spin)yaw+=dt*0.5f;
         int width,height;SDL_GetRenderOutputSize(renderer,&width,&height);
+        if(width!=modelWidth||height!=modelHeight){
+            if(modelLayer)SDL_DestroyTexture(modelLayer);
+            modelLayer=SDL_CreateTexture(renderer,SDL_PIXELFORMAT_RGBA32,SDL_TEXTUREACCESS_STREAMING,width,height);
+            if(modelLayer)SDL_SetTextureBlendMode(modelLayer,SDL_BLENDMODE_BLEND);
+            modelWidth=width;modelHeight=height;
+            modelPixels.resize(size_t(width)*height);modelDepth.resize(size_t(width)*height);
+        }
         float side=360,viewWidth=width-side,centerX=side+viewWidth/2+panX,centerY=height/2.f+25+panY;
         theme.Background(width,height);
         auto &model=models[catalogMode?0:selected];
@@ -388,14 +402,15 @@ void Show(){
         for(auto &f:model.faces)for(auto &p:f.p){lo.x=std::min(lo.x,p.x);lo.y=std::min(lo.y,p.y);lo.z=std::min(lo.z,p.z);hi.x=std::max(hi.x,p.x);hi.y=std::max(hi.y,p.y);hi.z=std::max(hi.z,p.z);}
         Point center{(lo.x+hi.x)/2,(lo.y+hi.y)/2,(lo.z+hi.z)/2};
         float extent=std::max({hi.x-lo.x,hi.y-lo.y,hi.z-lo.z,1.f}),scale=std::min(viewWidth*0.66f,height*0.67f)/extent*zoom;
-        struct Projected {SDL_Vertex v[4];float z;unsigned texture;};std::vector<Projected> draw;
+        struct Projected {SDL_Vertex v[4];float depth[4];unsigned texture;};std::vector<Projected> draw;
         const float cy=std::cos(yaw),sy=std::sin(yaw),cp=std::cos(pitch),sp=std::sin(pitch);
         for(auto &f:model.faces){
             Projected face{};face.texture=f.texture;
             for(int j=0;j<4;j++){
                 float x=f.p[j].x-center.x,y=f.p[j].y-center.y,z=f.p[j].z-center.z;
-                float xx=cy*x+sy*z,zz=-sy*x+cy*z,yy=cp*y-sp*zz;z=sp*y+cp*zz;face.z+=z;
+                float xx=cy*x+sy*z,zz=-sy*x+cy*z,yy=cp*y-sp*zz;z=sp*y+cp*zz;
                 float perspective=extent*3/(extent*3+z);
+                face.depth[j]=extent*3+z;
                 face.v[j].position={centerX+xx*scale*perspective,centerY+yy*scale*perspective};
                 face.v[j].color={1,1,1,1};
                 float u=(j==1||j==2)?1.f:0.f,v=j>=2?1.f:0.f;
@@ -403,12 +418,23 @@ void Show(){
             }
             draw.push_back(face);
         }
-        std::stable_sort(draw.begin(),draw.end(),[](auto &a,auto &b){return a.z>b.z;});
         SDL_Rect clip{360,145,width-360,height-213};SDL_SetRenderClipRect(renderer,&clip);
-        const int indices[]={0,1,2,0,2,3};
+        std::fill(modelPixels.begin(),modelPixels.end(),0);
+        std::fill(modelDepth.begin(),modelDepth.end(),std::numeric_limits<float>::infinity());
         for(auto &f:draw){
             if(wire){SDL_SetRenderDrawColor(renderer,255,220,80,255);for(int i=0;i<4;i++)SDL_RenderLine(renderer,f.v[i].position.x,f.v[i].position.y,f.v[(i+1)%4].position.x,f.v[(i+1)%4].position.y);}
-            else SDL_RenderGeometry(renderer,gpuTextures[f.texture],f.v,4,indices,6);
+            else if(modelLayer){
+                const auto &texture=renderTextures[f.texture];
+                gallery::Image image{texture.w,texture.h,texture.pixels.data(),smoothTextures[f.texture]};
+                gallery::Vertex v[4];
+                for(int i=0;i<4;i++)v[i]={f.v[i].position.x,f.v[i].position.y,f.depth[i],f.v[i].tex_coord.x,f.v[i].tex_coord.y};
+                gallery::Triangle(modelPixels,modelDepth,width,height,360,145,width,height-65,v[0],v[1],v[2],image);
+                gallery::Triangle(modelPixels,modelDepth,width,height,360,145,width,height-65,v[0],v[2],v[3],image);
+            }
+        }
+        if(!wire&&modelLayer){
+            SDL_UpdateTexture(modelLayer,nullptr,modelPixels.data(),width*4);
+            SDL_RenderTexture(renderer,modelLayer,nullptr,nullptr);
         }
         SDL_SetRenderClipRect(renderer,nullptr);
         theme.Header("GALLERY",width);
@@ -467,7 +493,7 @@ void Show(){
         if(!shot)SDL_Delay(8);
     }
     for(auto *p:pads)SDL_CloseGamepad(p);
-    for(auto *texture:gpuTextures)if(texture)SDL_DestroyTexture(texture);
+    if(modelLayer)SDL_DestroyTexture(modelLayer);
     theme.Clear();
     SDL_DestroyRenderer(renderer);
     if(embedded){satrecomp::TheGame().presentModal(nullptr,0,0);SDL_DestroySurface(canvas);}
