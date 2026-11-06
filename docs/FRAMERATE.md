@@ -69,3 +69,20 @@ repeated input pictures in the sampled moving scene. A second run under competin
 measured 8.335 ms median but 28.146 ms p95 (83.5 FPS average). Peaks remain possible: this is a
 pacing correction, not proof of locked 120 FPS or an isolated hardware benchmark. Replay simulation
 and audio hashes matched the previous implementation for all 1,000 compared simulation frames.
+
+## Native effect textures
+
+Interpolated pictures use the same byte-addressed R8 VRAM format as source pictures. The sprite
+framebuffers remain R16. A mismatched R16 scratch VRAM texture made native texture reads combine
+adjacent bytes and read beyond the uploaded snapshot. HD character textures could remain correct
+while effects that retained their original textures were corrupted, making the issue especially
+visible during hits. This correction applies to interpolation at both 60 and 120 FPS.
+
+The standalone GPU regression uses synthetic RGB555 particles, transparent texels and a mesh effect,
+without any game files. At the interpolation endpoint, every output pixel must match the native
+picture; the uncorrected build fails this comparison. It requires SDL3, zlib and a Vulkan GPU:
+
+```sh
+c++ -std=c++20 -I satrecomp/video tools/test_gpu_interpolation_textures.cpp satrecomp/video/gpu.cpp $(pkg-config --cflags --libs sdl3 zlib) -o test-gpu-interpolation
+./test-gpu-interpolation
+```

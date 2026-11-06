@@ -961,7 +961,8 @@ bool Gpu::DrawInterpolated(float fraction) {
         for(auto *&texture:m_previewSprites){Release(texture);texture=Texture(SDL_GPU_TEXTUREFORMAT_R16_UINT,m_spriteWidth*m_scale,m_spriteHeight*m_scale,true);}
         m_previewWidth=m_spriteWidth;m_previewHeight=m_spriteHeight;m_previewScale=m_scale;
     }
-    if(!m_previewVram){m_previewVram=Texture(SDL_GPU_TEXTUREFORMAT_R16_UINT,kVramWidth,kVramHeight,false);m_previewVramValid=false;}
+    // VRAM is byte-addressed, unlike the R16 sprite framebuffers. Uploads and fetch8() require R8.
+    if(!m_previewVram){m_previewVram=Texture(SDL_GPU_TEXTUREFORMAT_R8_UINT,kVramWidth,kVramHeight,false);m_previewVramValid=false;}
     if(!m_previewSprites[0]||!m_previewSprites[1]||!m_previewVram)return false;
     const float alpha=std::clamp((m_pictureAge+fraction)/m_pictureInterval,0.f,1.f);
     auto quads=m_frozenFrame.quads;
